@@ -12,17 +12,17 @@ function PipPlayerInner() {
   const playerRef = useRef<HTMLDivElement>(null);
   const artRef = useRef<Artplayer | null>(null);
 
-  const [currentUrl, setCurrentUrl] = useState<string | null>(searchParams.get('url'));
-  const [currentSub, setCurrentSub] = useState<string | null>(searchParams.get('sub'));
-  const [currentPoster, setCurrentPoster] = useState<string | null>(searchParams.get('poster'));
+  const videoUrl = searchParams.get('url');
+  const subUrl = searchParams.get('sub');
+  const poster = searchParams.get('poster');
   const startTime = searchParams.get('time');
 
   useEffect(() => {
-    if (!playerRef.current || !currentUrl) return;
+    if (!playerRef.current || !videoUrl) return;
 
     const art = new Artplayer({
       container: playerRef.current,
-      url: currentUrl,
+      url: videoUrl,
       type: 'm3u8',
       customType: {
         m3u8: function (video: HTMLMediaElement, url: string, art: Artplayer) {
@@ -75,10 +75,10 @@ function PipPlayerInner() {
       playsInline: true,
       autoSize: false,
       theme: '#ff4757',
-      poster: currentPoster || '',
-      subtitle: currentSub ? {
-        url: currentSub,
-        type: currentSub.toLowerCase().includes('.srt') ? 'srt' : 'vtt',
+      poster: poster || '',
+      subtitle: subUrl ? {
+        url: subUrl,
+        type: subUrl.toLowerCase().includes('.srt') ? 'srt' : 'vtt',
         style: {
           color: '#fff',
           fontSize: '20px',
@@ -130,11 +130,9 @@ function PipPlayerInner() {
         artRef.current.destroy(true);
         artRef.current = null;
       }
-      if (playerRef.current) {
-        playerRef.current.innerHTML = '';
-      }
+      if (playerRef.current) playerRef.current.innerHTML = '';
     };
-  }, [currentUrl, currentSub, currentPoster, startTime]);
+  }, [videoUrl, subUrl, poster, startTime]);
 
   // Listen for episode switch from main window
   useEffect(() => {
@@ -143,10 +141,28 @@ function PipPlayerInner() {
       try {
         unlistenUpdateFn = await listen<{url: string, sub: string, poster: string}>('pip-update-url', (event) => {
           const { url, sub, poster } = event.payload;
-          // Updating state triggers the other useEffect to destroy and recreate the player from scratch
-          setCurrentUrl(url);
-          setCurrentSub(sub);
-          setCurrentPoster(poster);
+          if (artRef.current) {
+            artRef.current.switchUrl(url);
+            
+            artRef.current.once('video:loadedmetadata', () => {
+              if (!artRef.current) return;
+              if (sub) {
+                const subType = sub.toLowerCase().includes('.srt') ? 'srt' : 'vtt';
+                try {
+                  artRef.current.subtitle.switch(sub, {
+                    type: subType,
+                    style: { color: '#fff', fontSize: '24px' },
+                    encoding: 'utf-8', escape: false,
+                  });
+                  artRef.current.subtitle.show = true;
+                } catch(e) {}
+              } else {
+                artRef.current.subtitle.show = false;
+              }
+              if (poster) artRef.current.poster = poster;
+              artRef.current.play().catch(() => {});
+            });
+          }
         });
       } catch (err) {
         console.error("Lỗi đăng ký cập nhật PiP:", err);
@@ -171,7 +187,7 @@ function PipPlayerInner() {
     }
   };
 
-  if (!currentUrl) return <div className="text-white p-4">Loading...</div>;
+  if (!videoUrl) return <div className="text-white p-4">Loading...</div>;
 
   return (
     <div className="w-screen h-screen bg-black group relative">
@@ -190,10 +206,22 @@ function PipPlayerInner() {
       </div>
       {/* playerRef MUST be absolute to force dimensions against Artplayer's dynamic sizing */}
       <style dangerouslySetInnerHTML={{ __html: `
-        .art-video-player, .art-video-player video, .art-video-player .art-video, .art-video-player .art-poster {
+        .art-video-player video, .art-video-player .art-video, .art-video-player .art-poster {
           width: 100% !important;
           height: 100% !important;
+          max-width: 100% !important;
+          max-height: 100% !important;
+          min-width: 100% !important;
+          min-height: 100% !important;
           object-fit: contain !important;
+          transform: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          top: 0 !important;
+          left: 0 !important;
+          right: 0 !important;
+          bottom: 0 !important;
+          position: absolute !important;
         }
         video::-webkit-media-text-track-container { display: none !important; }
       `}} />
