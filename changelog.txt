@@ -1,0 +1,40 @@
+# 🚀 HTSS Launcher v0.2.0 - Siêu Phiên Bản Cập Nhật
+
+Chào mừng bạn đến với phiên bản **v0.2.0** của HTSS Launcher! Bản cập nhật này mang lại hàng loạt tính năng đột phá, cải thiện tối đa trải nghiệm chơi game, stream anime và cá nhân hóa tài khoản của bạn.
+
+---
+
+### 🎮 1. Trình Quản lý Tài khoản Valorant Siêu Việt (Valorant Hub)
+*   **Chuyển đổi tài khoản 1-Click:** Hỗ trợ lưu trữ và chuyển đổi cực nhanh giữa nhiều tài khoản Valorant khác nhau mà không cần đăng xuất thủ công.
+*   **Đồng bộ Riot Client:** Nhận diện thông tin tài khoản trực tiếp từ Riot Client đang chạy (`lockfile`) thông qua Local API.
+*   **Auto Session Backup & Restore:** Tự động sao lưu và khôi phục cài đặt riêng tư (`RiotGamesPrivateSettings.yaml`) của Riot Games, giữ trạng thái đăng nhập nguyên vẹn và tránh bị Riot bắt nhập mật khẩu lại.
+*   **Trình kiểm tra cửa hàng (Store & Night Market):** Xem các vật phẩm đang bán trong Cửa hàng hàng ngày và Chợ Đêm ngay trên launcher mà không cần mở game.
+*   **Thống kê Career & Lịch sử đấu:** Theo dõi MMR, thứ hạng (Rank), xem chi tiết lịch sử các trận đấu Valorant gần nhất.
+*   **Tiến trình Battlepass & Contracts:** Theo dõi tiến độ thăng cấp Battlepass và hợp đồng Đặc vụ (Agent Contracts).
+
+### 💬 2. Tích hợp Discord & Trình cấu hình RPC Tối tân (Discord Hub)
+*   **Custom Rich Presence (RPC):** Tùy chỉnh trạng thái hoạt động trên Discord của bạn với các chi tiết phong phú (Custom State, Large/Small Image, Buttons).
+*   **Trình cài đặt Equicord tự động:** Hỗ trợ tải và cài đặt Equicord (client modifier cho Discord) trực tiếp chỉ với 1 nút nhấn.
+*   **Quản lý Plugin Questify:** Bật/tắt tính năng Questify để đồng bộ các nhiệm vụ của HTSS với Discord dễ dàng.
+*   **Kiểm soát ứng dụng Discord:** Tự động khởi chạy hoặc tắt hoàn toàn tiến trình Discord từ hệ thống.
+
+### 🎬 3. Trình phát Anime Cao cấp (Anime Hub)
+*   **Artplayer & HLS Support:** Phát trực tuyến anime chất lượng cao thông qua luồng HLS (`.m3u8`) được hỗ trợ bởi thư viện Artplayer & `hls.js` mạnh mẽ.
+*   **Smart Manifest Proxy:** Hệ thống tự động biên dịch lại tệp tin danh sách phát (`rewrite_manifest`) giúp stream mượt mà, ổn định và tránh lỗi phân giải tên miền/CORS từ nhà cung cấp.
+*   **Giao diện Anime Hub tối ưu:** Tìm kiếm phim, xem danh sách thịnh hành và hiển thị thông tin chi tiết anime một cách chuyên nghiệp.
+
+### 🔄 4. Hệ thống Tự động Cập nhật Glassmorphic (Premium Auto-Updater)
+*   **Auto Update Checker:** Launcher tự động truy vấn thông tin cập nhật mới nhất từ máy chủ GitHub Releases ngay khi khởi chạy.
+*   **Popup Giao diện Kính mờ (Glassmorphic Modal):** Thiết kế tuyệt đẹp, trực quan, hỗ trợ hiển thị đầy đủ nhật ký thay đổi của phiên bản mới.
+*   **Tải & Cài đặt Nền (Asynchronous Download):** Cập nhật không đồng bộ đi kèm thanh tiến trình mượt mà, tự động khởi động lại ứng dụng để áp dụng bản cập nhật ngay sau khi hoàn tất.
+
+---
+
+### 🛠️ 5. Các cải tiến và sửa lỗi khác
+*   Tối ưu hóa hiệu năng khởi động của Launcher.
+*   Tăng tốc độ truy xuất thông tin từ Riot Local API.
+*   Sửa lỗi rò rỉ bộ nhớ khi phát video HLS trong thời gian dài.
+*   Tối ưu hóa layout giúp hiển thị mượt mà trên nhiều độ phân giải màn hình khác nhau (Hỗ trợ tốt từ màn hình HD 1024x600 trở lên).
+
+---
+*Cảm ơn bạn đã luôn đồng hành cùng **HTSS.CLUB**! Hãy tận hưởng những tính năng mới nhất ngay hôm nay.* 😊

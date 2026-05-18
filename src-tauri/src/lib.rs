@@ -1866,7 +1866,7 @@ pub struct UpdateCheckResponse {
 
 #[tauri::command]
 async fn check_for_updates() -> Result<UpdateCheckResponse, String> {
-    let current_version = "0.1.0";
+    let current_version = "0.2.0";
     let client = get_async_http_client();
     
     // ==========================================
@@ -1987,6 +1987,7 @@ async fn download_and_install_update(app_handle: tauri::AppHandle, url: String) 
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     create_silent_command(&dest_path)
+        .arg("/S")
         .spawn()
         .map_err(|e| format!("Không thể chạy installer cập nhật: {}", e))?;
 
