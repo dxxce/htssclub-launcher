@@ -141,6 +141,11 @@ function PipPlayerInner() {
       try {
         unlistenUpdateFn = await listen<{url: string, sub: string, poster: string}>('pip-update-url', (event) => {
           const { url, sub, poster } = event.payload;
+          
+          // Show black overlay to hide the resize glitch
+          const overlay = document.getElementById('pip-loading-overlay');
+          if (overlay) overlay.style.opacity = '1';
+
           if (artRef.current) {
             artRef.current.switchUrl(url);
             
@@ -161,6 +166,16 @@ function PipPlayerInner() {
               }
               if (poster) artRef.current.poster = poster;
               artRef.current.play().catch(() => {});
+            });
+
+            // Hide overlay only after video starts playing and layout has settled
+            artRef.current.once('video:playing', () => {
+              // Also forcefully trigger a resize just in case
+              artRef.current?.emit('resize');
+              setTimeout(() => {
+                const overlay = document.getElementById('pip-loading-overlay');
+                if (overlay) overlay.style.opacity = '0';
+              }, 250);
             });
           }
         });
@@ -228,6 +243,12 @@ function PipPlayerInner() {
       <div className="absolute inset-0 w-full h-full [&_.art-video-player]:!w-full [&_.art-video-player]:!h-full [&_video]:!object-contain [&_video]:!w-full [&_video]:!h-full">
         <div ref={playerRef} className="w-full h-full !w-full !h-full" style={{ width: '100%', height: '100%' }} />
       </div>
+
+      {/* Black overlay to mask Artplayer layout shift glitches during switchUrl */}
+      <div 
+        id="pip-loading-overlay"
+        className="absolute inset-0 z-[9998] bg-black transition-opacity duration-300 pointer-events-none opacity-0"
+      />
     </div>
   );
 }
