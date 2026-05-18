@@ -153,9 +153,12 @@ function PipPlayerInner() {
                 artRef.current.subtitle.show = false;
               }
               if (poster) artRef.current.poster = poster;
-              // Force resize to fill the container - prevents video shrinking to top-left corner
-              artRef.current.resize();
               artRef.current.play().catch(() => {});
+            });
+            // Resize when video is actually rendering (fires after loadedmetadata)
+            // This is the correct moment - avoids the brief "small then full" flash
+            artRef.current.once('video:playing', () => {
+              if (artRef.current) artRef.current.emit('resize');
             });
           }
         });
