@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "htssclub",
-  "version": "0.2.0",
+  "version": "0.7.1",
   "identifier": "com.htssclub.app",
   "build": {
     "frontendDist": "../out",
@@ -14,13 +14,14 @@
       {
         "title": "HTSS Club",
         "width": 1280,
-        "height": 720,
+        "height": 860,
         "minWidth": 1024,
         "minHeight": 600,
         "resizable": true,
         "decorations": false,
         "fullscreen": false,
-        "transparent": true
+        "transparent": true,
+        "center": true
       }
     ],
     "security": {

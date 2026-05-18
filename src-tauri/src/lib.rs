@@ -7,6 +7,31 @@ use url::Url;
 use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 use std::sync::OnceLock;
 
+#[tauri::command]
+async fn create_pip_window(app: tauri::AppHandle, url: String, width: f64, height: f64) -> Result<(), String> {
+    use tauri::Manager;
+    
+    // Close existing
+    if let Some(window) = app.get_webview_window("htss-pip-window") {
+        let _ = window.close();
+    }
+    
+    // Create new
+    let _ = tauri::WebviewWindowBuilder::new(
+        &app,
+        "htss-pip-window",
+        tauri::WebviewUrl::App(url.parse().unwrap())
+    )
+    .title("HTSS PiP")
+    .inner_size(width, height)
+    .always_on_top(true)
+    .decorations(false)
+    .resizable(true)
+    .build()
+    .map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -1855,6 +1880,195 @@ async fn get_equicord_custom_rpc() -> Result<EquicordRpcResponse, String> {
     })
 }
 
+#[tauri::command]
+async fn fetch_short_reels_index(tab_key: String) -> Result<serde_json::Value, String> {
+    let client = get_async_http_client();
+    let url = format!("https://api.ushort.cloud/freereels/homepage/tab/index?tab_key={}&position_index=10001", tab_key);
+
+    let resp = client.get(&url)
+        .header("accept", "*/*")
+        .header("accept-language", "en-US,en;q=0.9")
+        .header("cache-control", "no-cache")
+        .header("origin", "https://ushort.cloud")
+        .header("pragma", "no-cache")
+        .header("referer", "https://ushort.cloud/")
+        .header("sec-ch-ua", "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"")
+        .header("sec-ch-ua-mobile", "?0")
+        .header("sec-ch-ua-platform", "\"Windows\"")
+        .header("sec-fetch-dest", "empty")
+        .header("sec-fetch-mode", "cors")
+        .header("sec-fetch-site", "same-site")
+        .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi gửi yêu cầu: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Lỗi API: HTTP {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp.json()
+        .await
+        .map_err(|e| format!("Lỗi đọc kết quả JSON: {}", e))?;
+
+    Ok(data)
+}
+
+#[tauri::command]
+async fn fetch_short_reels_feed(module_key: String, next: String) -> Result<serde_json::Value, String> {
+    let client = get_async_http_client();
+    let url = "https://api.ushort.cloud/freereels/homepage/tab/feed";
+    
+    let payload = serde_json::json!({
+        "module_key": module_key,
+        "next": next
+    });
+
+    let resp = client.post(url)
+        .header("accept", "application/json")
+        .header("accept-language", "en-US,en;q=0.9")
+        .header("cache-control", "no-cache")
+        .header("content-type", "application/json")
+        .header("origin", "https://ushort.cloud")
+        .header("pragma", "no-cache")
+        .header("referer", "https://ushort.cloud/")
+        .header("sec-ch-ua", "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"")
+        .header("sec-ch-ua-mobile", "?0")
+        .header("sec-ch-ua-platform", "\"Windows\"")
+        .header("sec-fetch-dest", "empty")
+        .header("sec-fetch-mode", "cors")
+        .header("sec-fetch-site", "same-site")
+        .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi gửi yêu cầu: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Lỗi API: HTTP {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp.json()
+        .await
+        .map_err(|e| format!("Lỗi đọc kết quả JSON: {}", e))?;
+
+    Ok(data)
+}
+
+#[tauri::command]
+async fn fetch_short_reels_detail(series_id: String) -> Result<serde_json::Value, String> {
+    let client = get_async_http_client();
+    let url = format!("https://api.ushort.cloud/freereels/video/info?series_id={}", series_id);
+
+    let resp = client.get(&url)
+        .header("accept", "*/*")
+        .header("accept-language", "en-US,en;q=0.9")
+        .header("cache-control", "no-cache")
+        .header("origin", "https://ushort.cloud")
+        .header("pragma", "no-cache")
+        .header("referer", "https://ushort.cloud/")
+        .header("sec-ch-ua", "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"")
+        .header("sec-ch-ua-mobile", "?0")
+        .header("sec-ch-ua-platform", "\"Windows\"")
+        .header("sec-fetch-dest", "empty")
+        .header("sec-fetch-mode", "cors")
+        .header("sec-fetch-site", "same-site")
+        .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi gửi yêu cầu: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Lỗi API: HTTP {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp.json()
+        .await
+        .map_err(|e| format!("Lỗi đọc kết quả JSON: {}", e))?;
+
+    Ok(data)
+}
+
+#[tauri::command]
+async fn search_short_reels(keyword: String, next: String, custom_token: Option<String>) -> Result<serde_json::Value, String> {
+    let client = get_async_http_client();
+    let url = "https://api.ushort.cloud/freereels/search/drama";
+    
+    let payload = serde_json::json!({
+        "keyword": keyword,
+        "next": next
+    });
+
+    let token = custom_token.unwrap_or_else(|| "eyJhbGciOiJIUzI1NiIsImtpZCI6ImJMN0I5NCt3dGxTdEQyWDgiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2tybm5seWJxamZkaXNzdmlhZ2NhLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJkMDEwYmI0OC02Y2U5LTQyNTgtOTM5MC05MGQ1ZjE1NmQyN2EiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzc5MTMyNzk1LCJpYXQiOjE3NzkxMjkxOTUsImVtYWlsIjoiZGNneHhpZUBnbWFpbC5jb20iLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIiwiZ29vZ2xlIl19LCJ1c2VyX21ldGFkYXRhIjp7ImF2YXRhcl91cmwiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NMYjhPcUN4NlczM3lmWEFCd0RaYXFnTjR4eVVVSzdMZmxheUNQNWc1VmNmWkZBZ0E9czk2LWMiLCJlbWFpbCI6ImRjZ3h4aWVAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImZ1bGxfbmFtZSI6ImRjZyIsImlzcyI6Imh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbSIsIm5hbWUiOiJkY2ciLCJuaWNrbmFtZSI6ImRjZyIsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwicGljdHVyZSI6Imh0dHBzOi8vbGgzLmdvb2dsZXVzZXJjb250ZW50LmNvbS9hL0FDZzhvY0xiOE9xQ3g2VzMzeWZYQUJ3RFphcWdONHh5VVVLN0xmbGF5Q1A1ZzVWY2ZaRkFnQT1zOTYtYyIsInByb3ZpZGVyX2lkIjoiMTA0ODUzMjI1ODU3MzgxMDU3MjIwIiwic3ViIjoiMTA0ODUzMjI1ODU3MzgxMDU3MjIwIn0sInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiYWFsIjoiYWFsMSIsImFtciI6W3sibWV0aG9kIjoib2F1dGgiLCJ0aW1lc3RhbXAiOjE3NzUzMTQ4OTV9XSwic2Vzc2lvbl9pZCI6IjViYTFiZDJmLWFjOTMtNGEwNi05Y2U5LTYzZTFiMGI0MDMyYiIsImlzX2Fub255bW91cyI6ZmFsc2V9.2BrGn1WkJhPCO3EYgJhRHTyhwHPum6C7Psgj0oW2vPI".to_string());
+    let auth_header = format!("Bearer {}", token);
+
+    let resp = client.post(url)
+        .header("accept", "application/json")
+        .header("accept-language", "en-US,en;q=0.9")
+        .header("authorization", &auth_header)
+        .header("cache-control", "no-cache")
+        .header("content-type", "application/json")
+        .header("origin", "https://ushort.cloud")
+        .header("pragma", "no-cache")
+        .header("referer", "https://ushort.cloud/")
+        .header("sec-ch-ua", "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"")
+        .header("sec-ch-ua-mobile", "?0")
+        .header("sec-ch-ua-platform", "\"Windows\"")
+        .header("sec-fetch-dest", "empty")
+        .header("sec-fetch-mode", "cors")
+        .header("sec-fetch-site", "same-site")
+        .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi gửi yêu cầu: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Lỗi API: HTTP {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp.json()
+        .await
+        .map_err(|e| format!("Lỗi đọc kết quả JSON: {}", e))?;
+
+    Ok(data)
+}
+
+#[tauri::command]
+async fn fetch_short_reels_hot_list() -> Result<serde_json::Value, String> {
+    let client = get_async_http_client();
+    let url = "https://api.ushort.cloud/freereels/search/hot-list";
+
+    let resp = client.post(url)
+        .header("accept", "*/*")
+        .header("accept-language", "en-US,en;q=0.9")
+        .header("cache-control", "no-cache")
+        .header("content-length", "0")
+        .header("origin", "https://ushort.cloud")
+        .header("pragma", "no-cache")
+        .header("referer", "https://ushort.cloud/")
+        .header("sec-ch-ua", "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"")
+        .header("sec-ch-ua-mobile", "?0")
+        .header("sec-ch-ua-platform", "\"Windows\"")
+        .header("sec-fetch-dest", "empty")
+        .header("sec-fetch-mode", "cors")
+        .header("sec-fetch-site", "same-site")
+        .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi gửi yêu cầu: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Lỗi API: HTTP {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp.json()
+        .await
+        .map_err(|e| format!("Lỗi đọc kết quả JSON: {}", e))?;
+
+    Ok(data)
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UpdateCheckResponse {
     pub has_update: bool,
@@ -1866,7 +2080,7 @@ pub struct UpdateCheckResponse {
 
 #[tauri::command]
 async fn check_for_updates() -> Result<UpdateCheckResponse, String> {
-    let current_version = "0.2.0";
+    let current_version = env!("CARGO_PKG_VERSION");
     let client = get_async_http_client();
     
     // ==========================================
@@ -1986,10 +2200,24 @@ async fn download_and_install_update(app_handle: tauri::AppHandle, url: String) 
     let _ = app_handle.emit("update-progress", 100);
     std::thread::sleep(std::time::Duration::from_millis(500));
 
-    create_silent_command(&dest_path)
-        .arg("/S")
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Không thể lấy đường dẫn executable hiện tại: {}", e))?;
+    
+    let installer_path = dest_path.to_str()
+        .ok_or_else(|| "Đường dẫn installer không hợp lệ".to_string())?;
+        
+    let current_exe_path = current_exe.to_str()
+        .ok_or_else(|| "Đường dẫn executable hiện tại không hợp lệ".to_string())?;
+
+    let shell_command = format!(
+        "Start-Sleep -Seconds 1; Start-Process -FilePath '{}' -ArgumentList '/S' -Wait; Start-Process -FilePath '{}'",
+        installer_path, current_exe_path
+    );
+
+    create_silent_command("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &shell_command])
         .spawn()
-        .map_err(|e| format!("Không thể chạy installer cập nhật: {}", e))?;
+        .map_err(|e| format!("Không thể khởi chạy tiến trình cập nhật ngầm: {}", e))?;
 
     std::process::exit(0);
 }
@@ -2128,6 +2356,7 @@ pub fn run() {
         });
     })
     .invoke_handler(tauri::generate_handler![
+        create_pip_window,
         get_riot_credentials, 
         fetch_valorant_storefront, 
         fetch_valorant_mmr, 
@@ -2156,7 +2385,12 @@ pub fn run() {
         get_active_valorant_account,
         logout_riot_client_keep_session,
         check_for_updates,
-        download_and_install_update
+        download_and_install_update,
+        fetch_short_reels_index,
+        fetch_short_reels_feed,
+        fetch_short_reels_detail,
+        search_short_reels,
+        fetch_short_reels_hot_list
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

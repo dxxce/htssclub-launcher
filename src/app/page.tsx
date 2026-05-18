@@ -7,12 +7,14 @@ import {
 import { useState, useCallback, useEffect } from "react";
 import ValorantHub from "./components/ValorantHub";
 import AnimeHub from "./components/AnimeHub";
+import ShortReelsHub from "./components/ShortReelsHub";
 import DiscordHub from "./components/DiscordHub";
 import ConfirmModal, { ConfirmOptions } from "./components/ConfirmModal";
 
 const NAV_ITEMS = [
   { id: "home", label: "Trang chủ", icon: Home },
   { id: "anime", label: "Anime", icon: Film },
+  { id: "short_reels", label: "Phim Ngắn", icon: Compass },
   { id: "valorant", label: "Valorant", icon: Gamepad2 },
   { id: "discord", label: "Discord", icon: MessageSquare },
 ];
@@ -28,8 +30,21 @@ export default function HomePage() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(0);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [appVersion, setAppVersion] = useState("0.6.9");
 
   useEffect(() => {
+    // Fetch version dynamically on mount
+    const fetchVersion = async () => {
+      try {
+        const { getVersion } = await import('@tauri-apps/api/app');
+        const ver = await getVersion();
+        setAppVersion(ver);
+      } catch (err) {
+        console.error("Lỗi lấy phiên bản:", err);
+      }
+    };
+    fetchVersion();
+
     // Check for updates on mount
     const checkUpdates = async () => {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -46,17 +61,27 @@ export default function HomePage() {
     checkUpdates();
 
     // Listen to update progress events
-    let unlisten: any;
+    let unlistenFn: (() => void) | null = null;
+    let isCleanedUp = false;
+
     const setupListener = async () => {
       const { listen } = await import('@tauri-apps/api/event');
-      unlisten = await listen<number>("update-progress", (event) => {
+      const cleanup = await listen<number>("update-progress", (event) => {
         setUpdateProgress(event.payload);
       });
+      if (isCleanedUp) {
+        cleanup();
+      } else {
+        unlistenFn = cleanup;
+      }
     };
     setupListener();
 
     return () => {
-      if (unlisten) unlisten.then((f: any) => f());
+      isCleanedUp = true;
+      if (unlistenFn) {
+        unlistenFn();
+      }
     };
   }, []);
 
@@ -124,7 +149,7 @@ export default function HomePage() {
               <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent drop-shadow-[0_0_6px_rgba(34,211,238,0.3)]">.club</span>
             </div>
             <div className="text-[8px] font-bold text-neutral-500 tracking-[0.22em] uppercase mt-1 leading-none">
-              Launcher v0.2.0
+              Launcher v{appVersion}
             </div>
           </div>
         </div>
@@ -232,6 +257,7 @@ export default function HomePage() {
         <div className="flex-1 overflow-y-auto px-6 pb-6 custom-scrollbar relative z-10 flex flex-col min-w-0">
           {activeNav === "valorant" && <ValorantHub key={reloadKey} />}
           {activeNav === "anime" && <AnimeHub key={reloadKey} onRegisterBack={registerBack} />}
+          {activeNav === "short_reels" && <ShortReelsHub key={reloadKey} onRegisterBack={registerBack} />}
           {activeNav === "discord" && <DiscordHub key={reloadKey} />}
           
           {activeNav === "home" && (

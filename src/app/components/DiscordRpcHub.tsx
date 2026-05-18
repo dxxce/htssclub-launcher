@@ -23,7 +23,7 @@ export default function DiscordRpcHub() {
   const [rpcAppName, setRpcAppName] = useState("htss.club");
   const [rpcClientId, setRpcClientId] = useState("1495523138816053459");
   const [rpcDetails, setRpcDetails] = useState("Đang phát triển Launcher");
-  const [rpcState, setRpcState] = useState("HTSS Club v0.2.0");
+  const [rpcState, setRpcState] = useState("HTSS Club v0.6.9");
   const [rpcLargeImg, setRpcLargeImg] = useState("logo");
   const [rpcLargeTxt, setRpcLargeTxt] = useState("HTSS.CLUB");
   const [rpcSmallImg, setRpcSmallImg] = useState("check");
@@ -81,6 +81,19 @@ export default function DiscordRpcHub() {
       setIsResolvingApp(false);
     }
   };
+
+  useEffect(() => {
+    const fetchVersion = async () => {
+      try {
+        const { getVersion } = await import('@tauri-apps/api/app');
+        const ver = await getVersion();
+        setRpcState(`HTSS Club v${ver}`);
+      } catch (err) {
+        console.error("Lỗi lấy phiên bản RPC:", err);
+      }
+    };
+    fetchVersion();
+  }, []);
 
   useEffect(() => {
     let interval: any = null;
@@ -782,7 +795,7 @@ export default function DiscordRpcHub() {
                         {rpcDetails || "Đang phát triển Launcher"}
                       </span>
                       <span className="text-[11px] text-neutral-400 truncate leading-tight">
-                        {rpcState || "HTSS Club v0.2.0"}
+                        {rpcState || "HTSS Club v0.6.9"}
                       </span>
                       {rpcShowTime && (
                         <span className="text-[11px] text-neutral-400 leading-tight flex items-center gap-1 font-mono mt-0.5">

@@ -30,6 +30,10 @@ body {
 }
 
 /* Custom Scrollbar styling */
+.custom-scrollbar {
+  scrollbar-gutter: stable;
+}
+
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
 }
