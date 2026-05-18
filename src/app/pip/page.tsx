@@ -105,13 +105,6 @@ function PipPlayerInner() {
     artRef.current = art;
 
     art.on('ready', () => {
-      // Inject CSS to force video to always fill the container - prevents shrink flash
-      const style = document.createElement('style');
-      style.textContent = [
-        `video::-webkit-media-text-track-container { display: none !important; }`,
-        `.art-video-player, .art-video-player video { width: 100% !important; height: 100% !important; object-fit: contain !important; }`,
-      ].join('\n');
-      document.head.appendChild(style);
 
       if (startTime) {
         art.seek = parseFloat(startTime);
@@ -196,6 +189,14 @@ function PipPlayerInner() {
         </button>
       </div>
       {/* playerRef MUST be absolute to force dimensions against Artplayer's dynamic sizing */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        .art-video-player, .art-video-player video, .art-video-player .art-video, .art-video-player .art-poster {
+          width: 100% !important;
+          height: 100% !important;
+          object-fit: contain !important;
+        }
+        video::-webkit-media-text-track-container { display: none !important; }
+      `}} />
       <div className="absolute inset-0 w-full h-full [&_.art-video-player]:!w-full [&_.art-video-player]:!h-full [&_video]:!object-contain [&_video]:!w-full [&_video]:!h-full">
         <div ref={playerRef} className="w-full h-full !w-full !h-full" style={{ width: '100%', height: '100%' }} />
       </div>
