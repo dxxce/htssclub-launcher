@@ -71,6 +71,16 @@ export default function AnimePlayer({ url, episodeId, poster, title, subtitles =
     };
   }, []);
 
+  // Reset Artplayer when episode changes so controls (including PiP button) are rebuilt fresh
+  useEffect(() => {
+    if (!initializedRef.current) return; // Not yet initialized, skip
+    if (artRef.current) {
+      artRef.current.destroy();
+      artRef.current = null;
+    }
+    initializedRef.current = false;
+  }, [episodeId]);
+
   useEffect(() => {
     if (!isClient || !cleanUrl || !playerRef.current) return;
 
@@ -278,7 +288,7 @@ export default function AnimePlayer({ url, episodeId, poster, title, subtitles =
               },
             },
           ] : [],
-          controls: (pip !== undefined && pip) ? [
+          controls: pip ? [
             {
               position: 'right',
               html: '<i class="art-icon" style="display:flex;align-items:center;justify-content:center;height:100%;"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="14" rx="2" ry="2"></rect><rect x="12" y="11" width="7" height="4" rx="1" ry="1"></rect></svg></i>',
