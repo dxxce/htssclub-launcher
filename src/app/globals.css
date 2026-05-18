@@ -52,3 +52,21 @@ body {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(168, 85, 247, 0.8);
 }
+
+/* 
+ * FORCE ARTPLAYER DIMENSIONS 
+ * This prevents the video from shrinking to the top left corner after switchUrl
+ * in the production build where dynamic injected CSS/Tailwind arbitrary variants 
+ * might be purged or overridden.
+ */
+.art-video-player, 
+.art-video-player video,
+.art-video-player .art-video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+}
+
+video::-webkit-media-text-track-container { 
+  display: none !important; 
+}
