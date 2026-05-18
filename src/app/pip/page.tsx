@@ -153,6 +153,8 @@ function PipPlayerInner() {
                 artRef.current.subtitle.show = false;
               }
               if (poster) artRef.current.poster = poster;
+              // Force resize to fill the container - prevents video shrinking to top-left corner
+              artRef.current.resize();
               artRef.current.play().catch(() => {});
             });
           }
