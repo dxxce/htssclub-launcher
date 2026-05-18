@@ -53,7 +53,7 @@ function PipPlayerInner() {
             art.hls = hls;
             art.on('destroy', () => {
               if (art.hls) {
-                art.hls.destroy();
+                (art.hls as Hls).destroy();
                 art.hls = null;
               }
             });
@@ -73,6 +73,7 @@ function PipPlayerInner() {
       miniProgressBar: true,
       backdrop: true,
       playsInline: true,
+      autoSize: false,
       theme: '#ff4757',
       poster: poster || '',
       subtitle: subUrl ? {
@@ -104,9 +105,12 @@ function PipPlayerInner() {
     artRef.current = art;
 
     art.on('ready', () => {
-      // Hide native tracks just in case
+      // Inject CSS to force video to always fill the container - prevents shrink flash
       const style = document.createElement('style');
-      style.textContent = `video::-webkit-media-text-track-container { display: none !important; }`;
+      style.textContent = [
+        `video::-webkit-media-text-track-container { display: none !important; }`,
+        `.art-video-player, .art-video-player video { width: 100% !important; height: 100% !important; object-fit: contain !important; }`,
+      ].join('\n');
       document.head.appendChild(style);
 
       if (startTime) {
@@ -155,10 +159,17 @@ function PipPlayerInner() {
               if (poster) artRef.current.poster = poster;
               artRef.current.play().catch(() => {});
             });
-            // Resize when video is actually rendering (fires after loadedmetadata)
-            // This is the correct moment - avoids the brief "small then full" flash
+            // Force layout recalculation when video starts playing to fix any residual shrink
             artRef.current.once('video:playing', () => {
-              if (artRef.current) artRef.current.emit('resize');
+              if (artRef.current) {
+                artRef.current.emit('resize');
+                // Also force video element style directly as fallback
+                const v = artRef.current.video;
+                if (v) {
+                  v.style.width = '100%';
+                  v.style.height = '100%';
+                }
+              }
             });
           }
         });
@@ -205,7 +216,10 @@ function PipPlayerInner() {
           <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>
-      <div ref={playerRef} className="w-full h-full" />
+      {/* playerRef MUST be absolute to force dimensions against Artplayer's dynamic sizing */}
+      <div className="absolute inset-0 w-full h-full [&_.art-video-player]:!w-full [&_.art-video-player]:!h-full [&_video]:!object-contain [&_video]:!w-full [&_video]:!h-full">
+        <div ref={playerRef} className="w-full h-full !w-full !h-full" style={{ width: '100%', height: '100%' }} />
+      </div>
     </div>
   );
 }

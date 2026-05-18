@@ -1,6 +1,6 @@
-# 🚀 HTSS Launcher v0.7.0 - Tích Hợp Phụ Đề Đa Ngôn Ngữ & Tối Ưu Hóa Trình Phát Phim Ngắn
+# 🚀 HTSS Launcher v0.7.5 - Tích Hợp Phụ Đề Đa Ngôn Ngữ & Tối Ưu Hóa Trình Phát Phim Ngắn
 
-Chào mừng bạn đến với phiên bản **v0.7.0** của HTSS Launcher! Bản cập nhật này mang tới trải nghiệm xem phim hoàn hảo nhất cho mục Phim Ngắn với sự hỗ trợ phụ đề và tinh chỉnh trình phát.
+Chào mừng bạn đến với phiên bản **v0.7.5** của HTSS Launcher! Bản cập nhật này mang tới trải nghiệm xem phim hoàn hảo nhất cho mục Phim Ngắn với sự hỗ trợ phụ đề và tinh chỉnh trình phát.
 
 ---
 
