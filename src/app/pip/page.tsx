@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Artplayer from 'artplayer';
 import Hls from 'hls.js';
 import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-export default function PipPlayer() {
+
+function PipPlayerInner() {
   const searchParams = useSearchParams();
   const playerRef = useRef<HTMLDivElement>(null);
   const artRef = useRef<Artplayer | null>(null);
@@ -201,5 +202,13 @@ export default function PipPlayer() {
       </div>
       <div ref={playerRef} className="w-full h-full" />
     </div>
+  );
+}
+
+export default function PipPage() {
+  return (
+    <Suspense fallback={<div className="w-screen h-screen bg-black" />}>
+      <PipPlayerInner />
+    </Suspense>
   );
 }
