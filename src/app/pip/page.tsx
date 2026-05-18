@@ -12,17 +12,17 @@ function PipPlayerInner() {
   const playerRef = useRef<HTMLDivElement>(null);
   const artRef = useRef<Artplayer | null>(null);
 
-  const videoUrl = searchParams.get('url');
-  const subUrl = searchParams.get('sub');
+  const [currentUrl, setCurrentUrl] = useState<string | null>(searchParams.get('url'));
+  const [currentSub, setCurrentSub] = useState<string | null>(searchParams.get('sub'));
+  const [currentPoster, setCurrentPoster] = useState<string | null>(searchParams.get('poster'));
   const startTime = searchParams.get('time');
-  const poster = searchParams.get('poster');
 
   useEffect(() => {
-    if (!playerRef.current || !videoUrl) return;
+    if (!playerRef.current || !currentUrl) return;
 
     const art = new Artplayer({
       container: playerRef.current,
-      url: videoUrl,
+      url: currentUrl,
       type: 'm3u8',
       customType: {
         m3u8: function (video: HTMLMediaElement, url: string, art: Artplayer) {
@@ -75,10 +75,10 @@ function PipPlayerInner() {
       playsInline: true,
       autoSize: false,
       theme: '#ff4757',
-      poster: poster || '',
-      subtitle: subUrl ? {
-        url: subUrl,
-        type: subUrl.toLowerCase().includes('.srt') ? 'srt' : 'vtt',
+      poster: currentPoster || '',
+      subtitle: currentSub ? {
+        url: currentSub,
+        type: currentSub.toLowerCase().includes('.srt') ? 'srt' : 'vtt',
         style: {
           color: '#fff',
           fontSize: '20px',
@@ -132,46 +132,25 @@ function PipPlayerInner() {
     };
     setupCloseListener();
 
-    // Listen for episode switch from main window
+    return () => {
+      if (artRef.current) {
+        artRef.current.destroy(false);
+        artRef.current = null;
+      }
+    };
+  }, [currentUrl, currentSub, currentPoster, startTime]);
+
+  // Listen for episode switch from main window
+  useEffect(() => {
     let unlistenUpdateFn: (() => void) | undefined;
     const setupUpdateListener = async () => {
       try {
         unlistenUpdateFn = await listen<{url: string, sub: string, poster: string}>('pip-update-url', (event) => {
           const { url, sub, poster } = event.payload;
-          if (artRef.current) {
-            artRef.current.switchUrl(url);
-            
-            artRef.current.once('video:loadedmetadata', () => {
-              if (!artRef.current) return;
-              if (sub) {
-                const subType = sub.toLowerCase().includes('.srt') ? 'srt' : 'vtt';
-                try {
-                  artRef.current.subtitle.switch(sub, {
-                    type: subType,
-                    style: { color: '#fff', fontSize: '24px' },
-                    encoding: 'utf-8', escape: false,
-                  });
-                  artRef.current.subtitle.show = true;
-                } catch(e) {}
-              } else {
-                artRef.current.subtitle.show = false;
-              }
-              if (poster) artRef.current.poster = poster;
-              artRef.current.play().catch(() => {});
-            });
-            // Force layout recalculation when video starts playing to fix any residual shrink
-            artRef.current.once('video:playing', () => {
-              if (artRef.current) {
-                artRef.current.emit('resize');
-                // Also force video element style directly as fallback
-                const v = artRef.current.video;
-                if (v) {
-                  v.style.width = '100%';
-                  v.style.height = '100%';
-                }
-              }
-            });
-          }
+          // Updating state triggers the other useEffect to destroy and recreate the player from scratch
+          setCurrentUrl(url);
+          setCurrentSub(sub);
+          setCurrentPoster(poster);
         });
       } catch (err) {
         console.error("Lỗi đăng ký cập nhật PiP:", err);
@@ -180,12 +159,9 @@ function PipPlayerInner() {
     setupUpdateListener();
 
     return () => {
-      if (artRef.current) {
-        artRef.current.destroy(false);
-      }
       if (unlistenUpdateFn) unlistenUpdateFn();
     };
-  }, [videoUrl, subUrl, startTime, poster]);
+  }, []);
 
   const closeAndSync = async () => {
     try {
@@ -199,7 +175,7 @@ function PipPlayerInner() {
     }
   };
 
-  if (!videoUrl) return <div className="text-white p-4">Loading...</div>;
+  if (!currentUrl) return <div className="text-white p-4">Loading...</div>;
 
   return (
     <div className="w-screen h-screen bg-black group relative">
