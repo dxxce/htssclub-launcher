@@ -134,8 +134,11 @@ function PipPlayerInner() {
 
     return () => {
       if (artRef.current) {
-        artRef.current.destroy(false);
+        artRef.current.destroy(true);
         artRef.current = null;
+      }
+      if (playerRef.current) {
+        playerRef.current.innerHTML = '';
       }
     };
   }, [currentUrl, currentSub, currentPoster, startTime]);
