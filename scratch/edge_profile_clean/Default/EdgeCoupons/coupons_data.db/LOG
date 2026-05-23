@@ -1,0 +1,5 @@
+2026/05/20-00:18:07.362 a5ac Creating DB f:\project\htssclub\scratch\edge_profile_clean\Default\EdgeCoupons/coupons_data.db since it was missing.
+2026/05/20-00:18:07.367 a5ac Reusing MANIFEST f:\project\htssclub\scratch\edge_profile_clean\Default\EdgeCoupons/coupons_data.db/MANIFEST-000001
+2026/05/20-00:18:14.532 991c Level-0 table #5: started
+2026/05/20-00:18:14.536 991c Level-0 table #5: 682468 bytes OK
+2026/05/20-00:18:14.538 991c Delete type=0 #3

@@ -10,7 +10,11 @@ import ValorantBattlepass from "./ValorantBattlepass";
 import ValorantAccounts from "./ValorantAccounts";
 import { useValorantStore } from "../store/useValorantStore";
 
-export default function ValorantHub() {
+interface ValorantHubProps {
+  reloadKey?: number;
+}
+
+export default function ValorantHub({ reloadKey }: ValorantHubProps) {
   const [currentView, setCurrentView] = useState<"hub" | "store" | "stats" | "history" | "battlepass" | "accounts">("hub");
   
   // Connect to Zustand Global Store
@@ -25,7 +29,7 @@ export default function ValorantHub() {
 
   useEffect(() => {
     loadAccounts();
-  }, [currentView, loadAccounts]);
+  }, [currentView, loadAccounts, reloadKey]);
 
   if (currentView !== "hub") {
     return (

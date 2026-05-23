@@ -1,0 +1,216 @@
+{
+   "checksum": "fc7e745fa6b58f481f1448dfcc89dc4d",
+   "roots": {
+      "bookmark_bar": {
+         "children": [ {
+            "date_added": "13411655461589722",
+            "date_last_used": "0",
+            "guid": "ddd96123-098f-4458-9979-1a80e884557a",
+            "id": "21",
+            "name": "Discord Member Delivery System",
+            "show_icon": false,
+            "source": "sync",
+            "type": "url",
+            "url": "https://member.delivery/",
+            "visit_count": 1
+         }, {
+            "date_added": "13409664677032986",
+            "date_last_used": "0",
+            "guid": "c53d2fb9-074f-451a-b28d-9d200dd1963f",
+            "id": "7",
+            "name": "Bing",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://www.bing.com/",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664676975295",
+            "date_last_used": "0",
+            "guid": "46700055-dc0e-4dbc-8b63-c353aa21c830",
+            "id": "8",
+            "name": "Apple",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://www.apple.com/",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664677129070",
+            "date_last_used": "0",
+            "guid": "8fd4d425-4372-4027-8e1f-9a711c5e7eec",
+            "id": "9",
+            "name": "Context7 - Up-to-date documentation for LLMs and AI code editors",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://context7.com/",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664677154391",
+            "date_last_used": "0",
+            "guid": "f394bf56-6a67-4e2a-accb-3564ae5bf048",
+            "id": "10",
+            "name": "Công cụ tạo Thẻ Sinh Viên",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://studentidcard.me/",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664677044898",
+            "date_last_used": "0",
+            "guid": "1f959b86-fe14-4620-ba37-2ac76e2794ba",
+            "id": "11",
+            "name": "Google",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://www.google.com.vn/?client=safari&channel=ipad_bm",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664677094064",
+            "date_last_used": "0",
+            "guid": "99813419-5a5f-4ea5-8344-83eaab140d9b",
+            "id": "12",
+            "name": "PocketBase - Open Source backend in 1 file",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://pocketbase.io/",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664677142128",
+            "date_last_used": "0",
+            "guid": "b3bcb80d-7dcc-4370-9a31-3a1edcf1ee11",
+            "id": "13",
+            "name": "Reqable · API Debugging Proxy & REST Client",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://reqable.com/en-US/",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664677069535",
+            "date_last_used": "0",
+            "guid": "9bc33a75-9833-46fe-b645-6d9f6b7be6bc",
+            "id": "14",
+            "name": "Ryo Yamada Wallpapers - Top Free Ryo Yamada Backgrounds - WallpaperAccess",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://wallpaperaccess.com/ryo-yamada",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664677081562",
+            "date_last_used": "0",
+            "guid": "b9b6aada-5453-4c71-a2e3-6c7cd096eecf",
+            "id": "15",
+            "name": "SleekDB - PHP NoSQL Flat File Database",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://sleekdb.github.io/",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664677166082",
+            "date_last_used": "0",
+            "guid": "1e85472e-eef8-4ba0-8571-690ba38fcfda",
+            "id": "16",
+            "name": "Train model giải normal captcha với google colab - How Kteam",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://howkteam.vn/course/giai-ngo-ai/train-model-giai-normal-captcha-voi-google-colab-4483?fbclid=IwdGRleANXr8dleHRuA2FlbQIxMQABHnPTzVsV6kcUU2b5b_OHf2pHIRGBuvAugVtIPg3yUjQOEv30aR3nW-Kib_9O_aem_LWsqISjlDm27H1sPjKuhKA",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664677058429",
+            "date_last_used": "0",
+            "guid": "e8662c24-acce-4daf-9230-d92641de358e",
+            "id": "17",
+            "name": "Yahoo",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://vn.yahoo.com/",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664677118070",
+            "date_last_used": "0",
+            "guid": "a1b1213b-4b62-4320-8b6c-690753878e6f",
+            "id": "18",
+            "name": "cobalt",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://cobalt.tools/",
+            "visit_count": 0
+         }, {
+            "date_added": "13409664677106069",
+            "date_last_used": "0",
+            "guid": "7a9e7cd2-6a98-41a3-92d6-92603d35cd57",
+            "id": "19",
+            "name": "oi猫 GIF动图 免费下载 - 爱给网",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://www.aigei.com/lib/gif/?sub=oi_mao&fbclid=IwZXh0bgNhZW0CMTEAAR4fruCJ00NZcBgTpDw7nFqMvUmxtUa8r7Kx2D_5jvpJW1eqBtoZuNJ8DjnqPQ_aem_mNnlEVQKQSxuE-RC8YCPew",
+            "visit_count": 0
+         } ],
+         "date_added": "13423684684753455",
+         "date_last_used": "0",
+         "date_modified": "13411655461589722",
+         "guid": "0bc5d13f-2cba-5d74-951f-3f233fe6c908",
+         "id": "1",
+         "name": "Favorites bar",
+         "source": "unknown",
+         "type": "folder"
+      },
+      "other": {
+         "children": [ {
+            "date_added": "13409664677205230",
+            "date_last_used": "0",
+            "guid": "2ed64e4b-b080-4cbe-bbeb-a4772e6a2b44",
+            "id": "20",
+            "name": "諾諾魔法工具",
+            "show_icon": false,
+            "source": "import_fre",
+            "type": "url",
+            "url": "https://tools.nuorpg.com/dev/codecard",
+            "visit_count": 0
+         } ],
+         "date_added": "13423684684753455",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "82b081ec-3dd3-529c-8475-ab6c344590dd",
+         "id": "2",
+         "name": "Other favorites",
+         "source": "unknown",
+         "type": "folder"
+      },
+      "synced": {
+         "children": [  ],
+         "date_added": "13423684684753455",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "4cf2e351-0e85-532b-bb37-df045d8f8d0f",
+         "id": "3",
+         "name": "Mobile favorites",
+         "source": "unknown",
+         "type": "folder"
+      },
+      "workspaces_v2": {
+         "children": [  ],
+         "date_added": "13423684684753455",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "75aa6670-344f-549d-b742-660f029506ab",
+         "id": "5",
+         "name": "Workspaces",
+         "source": "unknown",
+         "type": "folder"
+      }
+   },
+   "sync_metadata": "CjEKDgiIgQISCOJMP3SbAQAAEgAqGEduTGxwUE5lVllrbStzYnZ6NXJ6QkE9PUgDoAYHErIBCBMSrQEKHDcvV2lVMVowZmlaSitSNVIxRXJYaDExcHh4UT0SJDdhOWU3Y2QyLTZhOTgtNDFhMy05MmQ2LTkyNjAzZDM1Y2Q1NxgAIAEoADD///////////8BOPfi+onkM0D34vqJ5DNKHDBra0U0U3VDNEYxNTZaOVFNWVA0aXpTMTlxUT1aICIe//dqYjhIYUFGWlNSYVpjLzU3SEp5RlNNQkRtMDA9ZQAAAADCPgJgAhKyAQgSEq0BChxmUExpMm1RME9SOHArV3FqdFVuTzRqN1FjZkE9EiRhMWIxMjEzYi00YjYyLTQzMjAtOGI2Yy02OTA3NTM4NzhlNmYYACABKAAw////////////ATj34vqJ5DNA9+L6ieQzShwrelpVSXZnWHdYTU45a2VnU0xFVXVGdVR3Vnc9WiAiHv/uaWZZdkhBM0piZThlUzZ1WUJvbkVYenhjZWhjPWUAAAAAwj4CYAISsgEIEBKtAQoccnlZamttUnlSdHZtUkNYeFhtVno3cHRFN3JBPRIkMWU4NTQ3MmUtZWVmOC00YmEwLTg1NzEtNjkwYmEzOGZjZmRhGAAgASgAMP///////////wE49+L6ieQzQPfi+onkM0ocR2RjOXFMSWo4ajRQd0F5UllpSUpDdUN6MWVzPVogIh7/uDNEK3lNalVERzI3Qkw4VVprTkdHdmNMMVpvTT1lAAAAAMI+AmACErEBCA8SrAEKHHB5OEdnbmI5L1Avc0k2RzhvK1dnVTcvUXg1VT0SJGI5YjZhYWRhLTU0NTMtNGM3MS1hMmUzLTZjN2NkMDk2ZWVjZhgAIAEoADD///////////8BOPfi+onkM0D34vqJ5DNKHHFmSU1WRW5FSm5FSTRLVXE4Q1ZETFVOc1Npcz1aHyId/3BXakFnbEN6MGtiMGozbGJ3Z05GR2NWWS9ldz1lAAAAAMI+AmACErEBCA4SrAEKHDN3cExmU3VaVHFxa0poemlSenBFS2FkSGQ1RT0SJDliYzMzYTc1LTk4MzMtNDZmZS1iNjQ1LTZkOWY2YjdiZTZiYxgAIAEoADD///////////8BOPfi+onkM0D34vqJ5DNKHGxEVWNWalJEbVhPVHIwaXRhd05IMXdDS0FSRT1aHyId/2tzY0JGOTg5UFZ3NmNFZkpVSzVLK1BEL2VRdz1lAAAAAMI+AmACErEBCA0SrAEKHGFsM1BoNzJ1bVB4dTFFU3NTWmloMGdPWm1iST0SJGIzYmNiODBkLTdkY2MtNDM3MC05YTMxLTNhMWVkY2YxZWUxMRgAIAEoADD///////////8BOPfi+onkM0D34vqJ5DNKHFZBWTFHOGtoSittRDd3VDZNQVVWcTkwOXVpbz1aHyId/khoaytFcHRxWDEzRHhYcm8rVjFPSHptVlNaYz1lAAAAAMI+AmACErIBCBESrQEKHFhqR1pmeXUwVUhEVkpITWdoL3MvSnk3MGFCST0SJGU4NjYyYzI0LWFjY2UtNGRhZi05MjMwLWQ5MjY0MWRlMzU4ZRgAIAEoADD///////////8BOPfi+onkM0D34vqJ5DNKHGloME5JcHd2TDVSOElJeDN1YnljME5IM1VoST1aICIe/9xDZUtZVjdqTUU3c1RMeGYvYmhqMlJGd0dEVm89ZQAAAADCPgJgAhKxAQgKEqwBChw5bS9TNkJVak5oRkJmamY0bVl6YnpnOU9aakE9EiRmMzk0YmY1Ni02YTY3LTRlMmEtYWNjYi0zNTY0YWU1YmYwNDgYACABKAAw////////////ATj34vqJ5DNA9+L6ieQzShwwK3pORVNJRFE4akRCTXVPZzMrQ2tad25mM2s9Wh8iHfRTb0JodCswMGZnY29uLzBpUngyZERNUkVYekU9ZQAAAADCPgJgAhKOAQgDEokBChxuamdEdTg4ZUNydlhwODZwRDdmSEdjcUZwODg9EiQ1ZjYzYjUzZC1kZDFkLTVjYWMtYTdlZS1mODU1NDZmODgyNTIYACAAKAAwqtuc/JszOJnlnPybM0CZ5Zz8mzNKHHl6TkIwMWNuNTRBN2NSVTB1VCsvUGdtVHRVbz1aAGUAAAAAwj4CYAASsQEICRKsAQocZnZ5bktadUJKZ1VVMUcwQ1lNU2R3aVBRZDg4PRIkOGZkNGQ0MjUtNDM3Mi00MDI3LThlMWYtOWE3MTFjNWU3ZWVjGAAgASgAMP///////////wE49+L6ieQzQPfi+onkM0ocanoyQkR3aXRwRC9oVVNvMjNTUHIwbXpCZk5ZPVofIh3oYXJUcVhyS0paUlhXeWFUSTFtUzhCcjVWYU1VPWUAAAAAwj4CYAISsQEIDBKsAQocRFJUUDdqMTNBbTFLczdqdytSOStmWktXOWZJPRIkOTk4MTM0MTktNWE1Zi00ZWE1LTgzNDQtODNlYWFiMTQwZDliGAAgASgAMP///////////wE49+L6ieQzQPfi+onkM0ocR2xlcVBmOExtYlQ0bnVQQlNuM2o3Sld3enNnPVofIh39TEJQSkZVSGcyS3FER1Ruc0g5Vm5iM2hTeHZvPWUAAAAAwj4CYAISrAEIFRKnAQocbUJMZnZUWVZRTUFLdHZsbUhZSU52NXB2RnJZPRIkZGRkOTYxMjMtMDk4Zi00NDU4LTk5NzktMWE4MGU4ODQ1NTdhGAAgACgAMOGZ/aG3MzionP2htzNAqJz9obczShx1SW1KcWdZVGhZQmlaUGJmaEpLZ0JEdWtPK0k9Wh4iHEFmME9kbGlDU210LzZjMWJvY3NmcXlHbGhVTT1lQSD0psI+AmAFErABCBQSqwEKHHhjOHBHVlRGY0tObTdFOHZrWWFrOGdNK1FvST0SJDJlZDY0ZTRiLWIwODAtNGNiZS1iYmViLWE0NzcyZTZhMmI0NBgAIAEoADD///////////8BOPXi+onkM0D14vqJ5DNKHEFxcUpxejU1djlCbnF1ckN1OVNxYS9QanFFUT1aHiIcQlQ0R2FocFU2Wnk4Z3NwVUpqMHM0R21VRHBjPWUAAAAAwj4CYAISsQEICBKsAQocYjQwa2s0Q2t5eS9KWWJOaFJjbzVjUm1neEtrPRIkNDY3MDAwNTUtZGMwZS00ZGJjLThiNjMtYzM1M2FhMjFjODMwGAAgASgAMP///////////wE49+L6ieQzQPfi+onkM0ocR0Q4YWxLRzBTVXVSaEtHLzBaamQraXg4dUh3PVofIh3QZ05OTDkrclZCY1BFTnk5ZzNKR3VUQ2VHdVg4PWUAAAAAwj4CYAISsQEIBxKsAQocbkZ2ZkFRT3dvUmg1Z3NEUk96N3Z4am5KMWMwPRIkYzUzZDJmYjktMDc0Zi00NTFhLWIyOGQtOWQyMDBkZDE5NjNmGAAgASgAMP///////////wE49+L6ieQzQPfi+onkM0ocZkJzMy9pVmt4eWRNTVk0Mjg0ZUhkMTRMaUxnPVofIh2gQTdxNVlmckd5UE54K2lkUEpZcGt1dnR2YURNPWUAAAAAwj4CYAISjgEIARKJAQoceXhKLzZmdmtlY3I3a3A1RVF6QjR0V0xwZGJFPRIkNjE1NTIxOTMtNmE3MS01YTQ3LWJiMTUtOThlMmRjYTJiOTU4GAAgACgAMKPbnPybMzjZ45z8mzNA2eOc/JszShxhUkNXTGdoRjliNUlucUtJRHZ1Si9qdlFrRmM9WgBlAAAAAMI+AmAAErEBCAsSrAEKHC9nZUxyeWRxZ05OMit6R3puYlNFVDBJOUdyVT0SJDFmOTU5Yjg2LWZlMTQtNDYyMC1iYTM3LTJhYzc2ZTI3OTRiYRgAIAEoADD///////////8BOPfi+onkM0D34vqJ5DNKHEJHSXBkcStEeDIyaVVHaWJ2MG1KOWl4N3FRYz1aHyId+kZoNXpiRWs2VWVrMUJiRVdiZCtjVFRQWW9ydz1lAAAAAMI+AmACEo4BCAUSiQEKHHdSQnJaTCs2UEE5YXZLZ2pOUDdKWERMY2Z2cz0SJDI1OGQzMzg1LWFjOWUtNTEzNC05N2E1LTkzNTNlNGJlZTI3YRgAIAAoADCp25z8mzM46OSc/JszQOjknPybM0ocbm14NjVzUUR2eEk4VGdFZXYrQStudHRvU240PVoAZQAAAADCPgJgABKOAQgCEokBChxZY1NUb252RVNQd3FDczRMMmNyVmh2NjhMOTg9EiQ5Zjc3NzkyMS1lY2QwLTUxMTUtYWQyNC1jMWFlZmJlYzg3NjYYACAAKAAwpNuc/JszOIrknPybM0CK5Jz8mzNKHG9QVmtod0JSYlY2NUtDV1IyK0lPTkhXb091OD1aAGUAAAAAwj4CYAAwADgA",
+   "version": 1
+}

@@ -597,7 +597,8 @@ export default function ValorantStore() {
   ] as const;
 
   if (error && !loading) {
-    const isRiotClientError = error.includes("Riot Client") ||
+    const isRiotClientError = error.includes("RIOT_CLIENT_NOT_RUNNING") ||
+                              error.includes("Riot Client") ||
                               error.includes("lockfile") ||
                               error.includes("127.0.0.1") ||
                               error.includes("request for url") ||

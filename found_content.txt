@@ -1,0 +1,112 @@
+Created At: 2026-05-19T19:38:45Z
+Completed At: 2026-05-19T19:38:46Z
+
+				The command completed successfully.
+				Output:
+				<truncated 991 lines>
++                    } else {
++                        format!("http://localhost:3000/{}", clean_path)
++                    };
++                    let client = reqwest::Client::builder()
++                        .danger_accept_invalid_certs(true)
++                        .timeout(std::time::Duration::from_secs(10))
++                        .build()
++                        .unwrap_or_default();
++                    if let Ok(resp) = client.get(&dev_url).send().await {
++                        let status = resp.status().as_u16();
++                        let content_type = resp.headers()
++                            .get("content-type")
++                            .and_then(|v| v.to_str().ok())
++                            .unwrap_or("")
++                            .to_string();
++                        if let Ok(bytes) = resp.bytes().await {
++                            let response = format!(
++                                "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\nAccess-Control-Allow-Methods: *\r\n\r\n",
++                                status, content_type, bytes.len()
++                            );
++                            let _ = socket.write_all(response.as_bytes()).await;
++                            let _ = socket.write_all(&bytes).await;
++                            return;
++                        }
++                    }
++                }
++
++                // 2. Handle Static Assets from Tauri Asset Resolver (Production release mode)
++                let asset_path = if clean_path.is_empty() {
++                    "index.html".to_string()
++                } else {
++                    clean_path.to_string()
++                };
++
++                let resolver = app_clone.asset_resolver();
++                let mut asset = resolver.get(asset_path.clone());
++
++      
+<truncated 4218 bytes>
+               responder.respond(resp);
+             }
++
+         });
+     })
+     .invoke_handler(tauri::generate_handler![
+@@ -2390,9 +3251,26 @@ pub fn run() {
+         fetch_short_reels_feed,
+         fetch_short_reels_detail,
+         search_short_reels,
+-        fetch_short_reels_hot_list
++        fetch_short_reels_hot_list,
++        install_virtual_mic,
++        get_tts_audio,
++        fetch_steam_sales,
++        fetch_steam_game_details,
++        open_in_browser,
++        fetch_epic_games,
++        get_cloudflare_tunnel_url
+     ])
+     .setup(|app| {
++      let _ = TUNNEL_URL.set(Mutex::new(None));
++      let _ = TUNNEL_CHILD.set(Mutex::new(None));
++      
++      let app_handle = app.handle().clone();
++      tauri::async_runtime::spawn(async move {
++          start_production_local_server(app_handle).await;
++      });
++
++      start_cloudflare_tunnel();
++
+       if cfg!(debug_assertions) {
+         app.handle().plugin(
+           tauri_plugin_log::Builder::default()
+@@ -2402,6 +3280,29 @@ pub fn run() {
+       }
+       Ok(())
+     })
+-    .run(tauri::generate_context!())
+-    .expect("error while running tauri application");
++    .on_window_event(|_window, event| {
++        if let tauri::WindowEvent::Destroyed = event {
++            if let Some(child_mutex) = TUNNEL_CHILD.get() {
++                if let Ok(mut guard) = child_mutex.lock() {
++                    if let Some(mut child) = guard.take() {
++                        let _ = child.kill();
++                    }
++                }
++            }
++        }
++    })
++    .build(tauri::generate_context!())
++    .expect("error while building tauri application");
++
++    app.run(|_app_handle, event| {
++        if let tauri::RunEvent::Exit = event {
++            if let Some(child_mutex) = TUNNEL_CHILD.get() {
++                if let Ok(mut guard) = child_mutex.lock() {
++                    if let Some(mut child) = guard.take() {
++                        let _ = child.kill();
++                    }
++                }
++            }
++        }
++    });
+ }
+

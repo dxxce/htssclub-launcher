@@ -1,21 +1,74 @@
 'use client';
 
-import { useEffect, useState, useRef, Suspense } from 'react';
+import { useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Artplayer from 'artplayer';
 import Hls from 'hls.js';
 import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
+// Forces an element to be 100%x100% absolute, cannot be overridden by Artplayer's JS
+function lockElementSize(el: Element | null) {
+  if (!el) return;
+  const h = el as HTMLElement;
+  h.style.setProperty('width', '100%', 'important');
+  h.style.setProperty('height', '100%', 'important');
+  h.style.setProperty('max-width', '100%', 'important');
+  h.style.setProperty('max-height', '100%', 'important');
+  h.style.setProperty('min-width', '0', 'important');
+  h.style.setProperty('min-height', '0', 'important');
+  h.style.setProperty('position', 'absolute', 'important');
+  h.style.setProperty('top', '0', 'important');
+  h.style.setProperty('left', '0', 'important');
+  h.style.setProperty('right', '0', 'important');
+  h.style.setProperty('bottom', '0', 'important');
+  h.style.setProperty('transform', 'none', 'important');
+  h.style.setProperty('margin', '0', 'important');
+}
+
 function PipPlayerInner() {
   const searchParams = useSearchParams();
   const playerRef = useRef<HTMLDivElement>(null);
   const artRef = useRef<Artplayer | null>(null);
+  // Holds the MutationObserver that watches for Artplayer's size overrides
+  const observerRef = useRef<MutationObserver | null>(null);
 
   const videoUrl = searchParams.get('url');
   const subUrl = searchParams.get('sub');
   const poster = searchParams.get('poster');
   const startTime = searchParams.get('time');
+
+  // Start the MutationObserver on the Artplayer container
+  // This is the definitive fix: whenever Artplayer touches width/height inline styles,
+  // the observer immediately reverts them back to 100%
+  const startSizeObserver = (artPlayerEl: Element) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+    }
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+          const target = mutation.target as HTMLElement;
+          // If Artplayer set a non-100% width or height, revert immediately
+          const w = target.style.width;
+          const h = target.style.height;
+          if (w && w !== '100%') {
+            lockElementSize(target);
+          } else if (h && h !== '100%') {
+            lockElementSize(target);
+          }
+        }
+      }
+    });
+    observer.observe(artPlayerEl, {
+      attributes: true,
+      attributeFilter: ['style'],
+      subtree: true, // watch all children too (video, poster, etc.)
+    });
+    observerRef.current = observer;
+    // Lock immediately as well
+    lockElementSize(artPlayerEl);
+  };
 
   useEffect(() => {
     if (!playerRef.current || !videoUrl) return;
@@ -25,7 +78,7 @@ function PipPlayerInner() {
       url: videoUrl,
       type: 'm3u8',
       customType: {
-        m3u8: function (video: HTMLMediaElement, url: string, art: Artplayer) {
+        m3u8: function (video: HTMLMediaElement, url: string, art: any) {
           if (Hls.isSupported()) {
             if (art.hls) art.hls.destroy();
             const hls = new Hls({
@@ -105,6 +158,9 @@ function PipPlayerInner() {
     artRef.current = art;
 
     art.on('ready', () => {
+      // Start the MutationObserver on .art-video-player once it exists
+      const artEl = playerRef.current?.querySelector('.art-video-player');
+      if (artEl) startSizeObserver(artEl);
 
       if (startTime) {
         art.seek = parseFloat(startTime);
@@ -126,6 +182,10 @@ function PipPlayerInner() {
     setupCloseListener();
 
     return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
       if (artRef.current) {
         artRef.current.destroy(true);
         artRef.current = null;
@@ -141,16 +201,17 @@ function PipPlayerInner() {
       try {
         unlistenUpdateFn = await listen<{url: string, sub: string, poster: string}>('pip-update-url', (event) => {
           const { url, sub, poster } = event.payload;
-          
-          // Show black overlay to hide the resize glitch
-          const overlay = document.getElementById('pip-loading-overlay');
-          if (overlay) overlay.style.opacity = '1';
 
           if (artRef.current) {
             artRef.current.switchUrl(url);
-            
+
             artRef.current.once('video:loadedmetadata', () => {
               if (!artRef.current) return;
+
+              // Re-attach MutationObserver after switchUrl as Artplayer rebuilds DOM
+              const artEl = playerRef.current?.querySelector('.art-video-player');
+              if (artEl) startSizeObserver(artEl);
+
               if (sub) {
                 const subType = sub.toLowerCase().includes('.srt') ? 'srt' : 'vtt';
                 try {
@@ -166,16 +227,6 @@ function PipPlayerInner() {
               }
               if (poster) artRef.current.poster = poster;
               artRef.current.play().catch(() => {});
-            });
-
-            // Hide overlay only after video starts playing and layout has settled
-            artRef.current.once('video:playing', () => {
-              // Also forcefully trigger a resize just in case
-              artRef.current?.emit('resize');
-              setTimeout(() => {
-                const overlay = document.getElementById('pip-loading-overlay');
-                if (overlay) overlay.style.opacity = '0';
-              }, 250);
             });
           }
         });
@@ -205,7 +256,7 @@ function PipPlayerInner() {
   if (!videoUrl) return <div className="text-white p-4">Loading...</div>;
 
   return (
-    <div className="w-screen h-screen bg-black group relative">
+    <div className="w-screen h-screen bg-black group relative overflow-hidden">
       {/* Drag region header for borderless window */}
       <div 
         data-tauri-drag-region
@@ -219,19 +270,22 @@ function PipPlayerInner() {
           <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>
-      {/* playerRef MUST be absolute to force dimensions against Artplayer's dynamic sizing */}
+
+      {/* Static CSS override - defense layer 1 */}
       <style dangerouslySetInnerHTML={{ __html: `
+        .art-video-player {
+          width: 100% !important;
+          height: 100% !important;
+          margin: 0 !important;
+        }
         .art-video-player video, .art-video-player .art-video, .art-video-player .art-poster {
           width: 100% !important;
           height: 100% !important;
           max-width: 100% !important;
           max-height: 100% !important;
-          min-width: 100% !important;
-          min-height: 100% !important;
           object-fit: contain !important;
           transform: none !important;
           margin: 0 !important;
-          padding: 0 !important;
           top: 0 !important;
           left: 0 !important;
           right: 0 !important;
@@ -240,14 +294,16 @@ function PipPlayerInner() {
         }
         video::-webkit-media-text-track-container { display: none !important; }
       `}} />
-      <div className="absolute inset-0 w-full h-full [&_.art-video-player]:!w-full [&_.art-video-player]:!h-full [&_video]:!object-contain [&_video]:!w-full [&_video]:!h-full">
-        <div ref={playerRef} className="w-full h-full !w-full !h-full" style={{ width: '100%', height: '100%' }} />
-      </div>
 
-      {/* Black overlay to mask Artplayer layout shift glitches during switchUrl */}
-      <div 
-        id="pip-loading-overlay"
-        className="absolute inset-0 z-[9998] bg-black transition-opacity duration-300 pointer-events-none opacity-0"
+      {/* Player container - defense layer 2 via MutationObserver in JS */}
+      <div
+        ref={playerRef}
+        style={{
+          position: 'absolute',
+          top: 0, left: 0, right: 0, bottom: 0,
+          width: '100%',
+          height: '100%',
+        }}
       />
     </div>
   );

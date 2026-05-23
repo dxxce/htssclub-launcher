@@ -17,7 +17,7 @@ interface LogLine {
   msg: string;
 }
 
-export default function DiscordHub() {
+export default function DiscordHub({ reloadKey }: { reloadKey?: number }) {
   const [activeSubTab, setActiveSubTab] = useState<"tools" | "rpc">("tools");
   const [installStatus, setInstallStatus] = useState<InstallStatus>("idle");
   const [questifyStatus, setQuestifyStatus] = useState<QuestifyStatus>("loading");
@@ -94,6 +94,13 @@ export default function DiscordHub() {
 
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (reloadKey) {
+      checkDiscordStatus(true);
+      checkEquicordInstalled(true);
+    }
+  }, [reloadKey]);
 
   const handleInstallEquicord = async () => {
     if (installStatus === "loading") return;

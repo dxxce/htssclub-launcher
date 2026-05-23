@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.8.2"
+version = "0.9.7"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -29,3 +29,9 @@ urlencoding = "2.1"
 percent-encoding = "2.3"
 url = "2.5"
 discord-rich-presence = "0.2.4"
+msedge-tts = "0.3.0"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+uuid = { version = "1.8", features = ["v4"] }
+sha2 = "0.10"
+futures-util = "0.3"
+tokio = { version = "1", features = ["full"] }

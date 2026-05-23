@@ -1,21 +1,7 @@
-# 🚀 HTSS Launcher v0.7.9 - Tích Hợp Phụ Đề Đa Ngôn Ngữ & Tối Ưu Hóa Trình Phát Phim Ngắn
+### 👾 Bản cập nhật v0.9.7
 
-Chào mừng bạn đến với phiên bản **v0.7.9** của HTSS Launcher! Bản cập nhật này mang tới trải nghiệm xem phim hoàn hảo nhất cho mục Phim Ngắn với sự hỗ trợ phụ đề và tinh chỉnh trình phát.
-
----
-
-### 🎬 1. Phụ Đề Đa Ngôn Ngữ (Multi-language Subtitles)
-*   **Hỗ trợ hoàn chỉnh định dạng SRT/VTT:** Tích hợp bộ giải mã và nhận diện phụ đề động, hỗ trợ tải và hiển thị mượt mà cả hai định dạng `.srt` và `.vtt`.
-*   **Đa dạng ngôn ngữ:** Tự động nạp danh sách phụ đề từ máy chủ (Tiếng Việt, Tiếng Anh, Tiếng Indonesia, Tiếng Đức, Tiếng Pháp, v.v.).
-*   **Tự động chọn Tiếng Việt:** Ưu tiên tự động hiển thị phụ đề Tiếng Việt làm mặc định khi bắt đầu phát.
-*   **Kích thước & Bóng chữ chuyên nghiệp:** Chữ phụ đề được làm gọn gàng ở mức `15px` để vừa vặn hoàn hảo với màn hình đứng 9:16, kết hợp bóng viền sắc nét giúp dễ đọc trên mọi hậu cảnh.
-
-### ⚡ 2. Trình Phát Siêu Tốc & Tinh Giản (Ultra-light Player)
-*   **Loại bỏ Tiếp tục xem:** Khai tử cửa sổ xác nhận "Tiếp tục xem?" cùng các tiến trình theo dõi thời lượng cũ để tập trung phát phim ngay lập tức từ đầu mà không có bất kỳ độ trễ hay cản trở nào.
-
-### 🎨 3. Spacing & Window Dimensions
-*   **Cải thiện khoảng cách trên:** Đẩy phần tiêu đề phim và nút quay lại xuống dưới thêm `24px` để giao diện cân đối, thông thoáng và không bị sát viền cửa sổ.
-*   **Mở rộng chiều cao ứng dụng:** Tăng chiều cao mặc định của ứng dụng lên `860px` giúp trải nghiệm hiển thị rộng rãi, trọn vẹn hơn.
-
----
-*Cảm ơn bạn đã luôn đồng hành cùng **HTSS.CLUB**! Hãy tận hưởng phiên bản mới nhất ngay hôm nay.* 😊
+- Sửa lỗi Valorant Store: giờ luôn dùng Riot Client đang chạy thay vì token đã lưu. Hiện nút "Mở Riot Client" khi chưa mở.
+- Sửa lỗi AnimePlayer: bỏ recover loop gây reload video liên tục.
+- Bỏ bo góc (rounded corners) trên AnimePlayer.
+- Sửa nút "Xem tập 1" hiển thị đúng tập đầu tiên.
+- Cập nhật proxy v-stream: thêm logic chọn Referer phù hợp cho các nguồn video khác nhau.

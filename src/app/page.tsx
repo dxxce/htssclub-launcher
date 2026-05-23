@@ -2,13 +2,15 @@
 
 import {
   Settings, Search, Bell, Minus, Square, X,
-  Play, Plus, Film, Home, Library, Compass, UserCircle, LogOut, TrendingUp, Sparkles, ChevronLeft, RotateCw, Gamepad2, MessageSquare
+  Play, Plus, Film, Home, Library, Compass, UserCircle, LogOut, TrendingUp, Sparkles, ChevronLeft, RotateCw, Gamepad2, MessageSquare, Languages
 } from "lucide-react";
 import { useState, useCallback, useEffect } from "react";
 import ValorantHub from "./components/ValorantHub";
 import AnimeHub from "./components/AnimeHub";
 import ShortReelsHub from "./components/ShortReelsHub";
 import DiscordHub from "./components/DiscordHub";
+import TranslationHub from "./components/TranslationHub";
+import CombinedDeals from "./components/CombinedDeals";
 import ConfirmModal, { ConfirmOptions } from "./components/ConfirmModal";
 
 const NAV_ITEMS = [
@@ -17,14 +19,52 @@ const NAV_ITEMS = [
   { id: "short_reels", label: "Phim Ngắn", icon: Compass },
   { id: "valorant", label: "Valorant", icon: Gamepad2 },
   { id: "discord", label: "Discord", icon: MessageSquare },
+  { id: "translation", label: "Dịch & Giọng nói", icon: Languages },
+];
+
+const NEWS_ITEMS = [
+  {
+    id: 1,
+    category: "Cập nhật",
+    date: "Hôm nay, 14:20",
+    title: "HTSS Launcher bổ sung tính năng dịch hội thoại AI đa ngôn ngữ",
+    summary: "Trải nghiệm tính năng dịch thời gian thực tích hợp trực tiếp vào Launcher giúp giao tiếp không rào cản.",
+    image: "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=300&q=80",
+  },
+  {
+    id: 2,
+    category: "Sự kiện",
+    date: "18 tháng 5",
+    title: "Giải đấu Valorant HTSS Championship mùa hè chính thức mở đăng ký",
+    summary: "Đăng ký tham gia ngay cùng đội tuyển của bạn để giành những phần quà giá trị cùng kỷ niệm chương.",
+    image: "https://images.unsplash.com/photo-1560253023-3ec5d502959f?auto=format&fit=crop&w=300&q=80",
+  },
+  {
+    id: 3,
+    category: "Game News",
+    date: "17 tháng 5",
+    title: "Steam Sale hè 2026: Danh sách các tựa game AAA giảm giá sốc nhất",
+    summary: "Điểm qua những tựa game bom tấn đang có mức giá cực hời trên cửa hàng Steam hiện nay.",
+    image: "https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=300&q=80",
+  },
+  {
+    id: 4,
+    category: "Hệ thống",
+    date: "15 tháng 5",
+    title: "Nâng cấp máy chủ Anime Hub - xem phim chất lượng 4K siêu tốc",
+    summary: "Nâng cấp băng thông máy chủ chuyên dụng giúp cải thiện tốc độ tải video anime lên đến 200%.",
+    image: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=300&q=80",
+  }
 ];
 
 export default function HomePage() {
   const [activeNav, setActiveNav] = useState("home");
   const [activeTab, setActiveTab] = useState("Thịnh hành");
   const [reloadKey, setReloadKey] = useState(0);
-  const [backCallback, setBackCallback] = useState<(() => void) | null>(null);
+  const [visitedTabs, setVisitedTabs] = useState<string[]>(["home"]);
+  const [backCallbacks, setBackCallbacks] = useState<Record<string, (() => void) | null>>({});
   const [confirmConfig, setConfirmConfig] = useState<ConfirmOptions | null>(null);
+
 
   const [updateConfig, setUpdateConfig] = useState<any | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -33,6 +73,9 @@ export default function HomePage() {
   const [appVersion, setAppVersion] = useState("0.6.9");
 
   useEffect(() => {
+    if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) {
+      return;
+    }
     // Fetch version dynamically on mount
     const fetchVersion = async () => {
       try {
@@ -85,7 +128,7 @@ export default function HomePage() {
     };
   }, []);
 
-  useEffect(() => {
+    useEffect(() => {
     window.confirmCustom = (options) => {
       setConfirmConfig(options);
     };
@@ -94,9 +137,18 @@ export default function HomePage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!visitedTabs.includes(activeNav)) {
+      setVisitedTabs(prev => [...prev, activeNav]);
+    }
+  }, [activeNav, visitedTabs]);
+
   const registerBack = useCallback((cb: (() => void) | null) => {
-    setBackCallback(() => cb);
-  }, []);
+    setBackCallbacks(prev => ({
+      ...prev,
+      [activeNav]: cb
+    }));
+  }, [activeNav]);
 
   const activeNavLabel = NAV_ITEMS.find(n => n.id === activeNav)?.label || "Trang chủ";
 
@@ -206,9 +258,12 @@ export default function HomePage() {
           <div data-tauri-drag-region="false" className="flex items-center h-full px-6 gap-4 cursor-default">
             <div className="flex items-center gap-1">
               <button 
-                onClick={() => { if (backCallback) backCallback(); }}
-                disabled={!backCallback}
-                className={`w-7 h-7 rounded-full flex items-center justify-center transition-all cursor-pointer ${backCallback ? 'text-neutral-200 hover:bg-white/10 hover:text-white' : 'text-neutral-600 opacity-55 cursor-not-allowed'}`}
+                onClick={() => { 
+                  const cb = backCallbacks[activeNav];
+                  if (cb) cb(); 
+                }}
+                disabled={!backCallbacks[activeNav]}
+                className={`w-7 h-7 rounded-full flex items-center justify-center transition-all cursor-pointer ${backCallbacks[activeNav] ? 'text-neutral-200 hover:bg-white/10 hover:text-white' : 'text-neutral-600 opacity-55 cursor-not-allowed'}`}
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -255,18 +310,125 @@ export default function HomePage() {
         </div>
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto px-6 pb-6 custom-scrollbar relative z-10 flex flex-col min-w-0">
-          {activeNav === "valorant" && <ValorantHub key={reloadKey} />}
-          {activeNav === "anime" && <AnimeHub key={reloadKey} onRegisterBack={registerBack} />}
-          {activeNav === "short_reels" && <ShortReelsHub key={reloadKey} onRegisterBack={registerBack} />}
-          {activeNav === "discord" && <DiscordHub key={reloadKey} />}
-          
-          {activeNav === "home" && (
-            <div className="flex flex-col items-center justify-center w-full h-full min-h-[400px] gap-4">
-              <Sparkles className="w-12 h-12 text-cyan-500 mb-2" />
-              <h2 className="text-2xl font-black text-white">Chào mừng đến với HTSS.CLUB</h2>
-              <p className="text-neutral-400">Vui lòng chọn một chức năng từ thanh công cụ bên trái.</p>
+          {visitedTabs.includes("valorant") && (
+            <div className={activeNav === "valorant" ? "flex flex-col flex-1 min-w-0" : "hidden"}>
+              <ValorantHub reloadKey={reloadKey} />
             </div>
           )}
+          {visitedTabs.includes("anime") && (
+            <div className={activeNav === "anime" ? "flex flex-col flex-1 min-w-0" : "hidden"}>
+              <AnimeHub reloadKey={reloadKey} onRegisterBack={registerBack} />
+            </div>
+          )}
+          {visitedTabs.includes("short_reels") && (
+            <div className={activeNav === "short_reels" ? "flex flex-col flex-1 min-w-0" : "hidden"}>
+              <ShortReelsHub reloadKey={reloadKey} onRegisterBack={registerBack} />
+            </div>
+          )}
+          {visitedTabs.includes("discord") && (
+            <div className={activeNav === "discord" ? "flex flex-col flex-1 min-w-0" : "hidden"}>
+              <DiscordHub reloadKey={reloadKey} />
+            </div>
+          )}
+          {visitedTabs.includes("translation") && (
+            <div className={activeNav === "translation" ? "flex flex-col flex-1 min-w-0" : "hidden"}>
+              <TranslationHub reloadKey={reloadKey} />
+            </div>
+          )}
+          
+          <div className={activeNav === "home" ? "flex flex-col flex-1 min-w-0 gap-6 text-neutral-200" : "hidden"}>
+            {/* Premium Header Banner */}
+            <div className="relative overflow-hidden bg-gradient-to-br from-[#0c0c12]/70 to-[#050508]/40 border border-white/5 backdrop-blur-xl rounded-3xl p-6 md:p-8 shadow-2xl">
+              {/* Glow effects */}
+              <div className="absolute inset-0 rounded-3xl overflow-hidden pointer-events-none z-0">
+                <div className="absolute top-[-20%] right-[-10%] w-[40%] h-[70%] bg-cyan-600/10 blur-[80px] rounded-full animate-pulse" />
+                <div className="absolute bottom-[-10%] left-[-10%] w-[30%] h-[60%] bg-violet-600/10 blur-[70px] rounded-full" />
+              </div>
+
+              <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center shadow-[0_0_15px_rgba(6,182,212,0.15)]">
+                      <Sparkles className="w-4 h-4 text-cyan-400" />
+                    </div>
+                    <h1 className="text-xl md:text-2xl font-black text-white tracking-tight">HTSS CLUB LAUNCHER</h1>
+                  </div>
+                  <p className="text-xs md:text-sm text-neutral-400 mt-2 max-w-xl leading-relaxed">
+                    Chào mừng bạn quay trở lại! Trải nghiệm giải trí đỉnh cao với kho phim Anime, Phim ngắn, dịch giọng nói AI và theo dõi các ưu đãi game bản quyền mới nhất mỗi ngày.
+                  </p>
+                </div>
+
+                {/* Quick actions grid */}
+                <div className="flex flex-wrap gap-2">
+                  {NAV_ITEMS.filter(item => item.id !== "home").map((item) => {
+                    const IconComponent = item.icon;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveNav(item.id)}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 hover:border-cyan-500/30 rounded-xl text-[11px] font-bold text-neutral-300 hover:text-cyan-400 transition-all duration-300 cursor-pointer hover:shadow-[0_0_15px_rgba(6,182,212,0.05)]"
+                      >
+                        <IconComponent className="w-3.5 h-3.5" />
+                        <span>{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Tin tức & Cập nhật Section */}
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center shadow-[0_0_15px_rgba(6,182,212,0.15)]">
+                  <TrendingUp className="w-4 h-4 text-cyan-400" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-black text-white uppercase tracking-wider">Tin tức & Cập nhật</h2>
+                  <p className="text-[10px] text-neutral-400 mt-0.5">Tin mới nhất về game và hệ thống HTSS.CLUB</p>
+                </div>
+              </div>
+
+              {/* News Feed - 2 Column Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {NEWS_ITEMS.map((news) => (
+                  <div 
+                    key={news.id}
+                    className="group bg-[#0e0e15]/40 hover:bg-[#12121e]/85 border border-white/5 hover:border-cyan-500/25 rounded-2xl p-4 flex gap-4 transition-all duration-300 backdrop-blur-md cursor-pointer"
+                  >
+                    <div className="relative w-24 h-16 sm:w-28 sm:h-20 overflow-hidden rounded-xl bg-neutral-950 border border-white/5 shrink-0">
+                      <img 
+                        src={news.image} 
+                        alt="" 
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                      />
+                    </div>
+                    <div className="flex flex-col justify-between min-w-0 flex-1">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/25">
+                            {news.category}
+                          </span>
+                          <span className="text-[9px] text-neutral-500">{news.date}</span>
+                        </div>
+                        <h4 className="text-xs sm:text-sm font-bold text-neutral-100 group-hover:text-cyan-400 transition-colors mt-2 line-clamp-2">
+                          {news.title}
+                        </h4>
+                      </div>
+                      <p className="text-[10px] text-neutral-400 line-clamp-1 mt-1">
+                        {news.summary}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Combined Game Deals Section (Full Width) */}
+            <div className="flex flex-col min-w-0">
+              <CombinedDeals />
+            </div>
+          </div>
         </div>
         {confirmConfig && (
           <ConfirmModal 

@@ -101,16 +101,38 @@ const AnimeCard = ({ anime, onClick }: { anime: Anime; onClick: () => void }) =>
   );
 }
 
+const SkeletonCard = () => {
+  return (
+    <div className="aspect-[2/3] rounded-2xl bg-[#0a0a0f] border border-white/5 p-4 flex flex-col justify-end gap-3 animate-pulse relative overflow-hidden">
+      {/* Top badges placeholder */}
+      <div className="absolute top-3 left-3 w-12 h-6 rounded-lg bg-white/[0.03]" />
+      <div className="absolute top-3 right-3 w-16 h-6 rounded-lg bg-white/[0.03]" />
+
+      {/* Bottom text placeholders */}
+      <div className="w-full h-4 rounded bg-white/[0.05]" />
+      <div className="w-2/3 h-3 rounded bg-white/[0.03] mt-1" />
+    </div>
+  );
+};
+
 interface AnimeHubProps {
   onRegisterBack?: (cb: (() => void) | null) => void;
+  reloadKey?: number;
 }
 
-export default function AnimeHub({ onRegisterBack }: AnimeHubProps) {
-  const [trending, setTrending] = useState<Anime[]>([]);
+export default function AnimeHub({ onRegisterBack, reloadKey }: AnimeHubProps) {
+  const [heroSlides, setHeroSlides] = useState<any[]>([]);
   const [latest, setLatest] = useState<Anime[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingLatest, setLoadingLatest] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const [activeTab, setActiveTab] = useState<"latest" | "views">("latest");
+
+  const handleTabChange = (tab: "latest" | "views") => {
+    setActiveTab(tab);
+    setPage(1);
+  };
   
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -162,25 +184,35 @@ export default function AnimeHub({ onRegisterBack }: AnimeHubProps) {
   }, [page]);
 
   useEffect(() => {
-    async function fetchTrending() {
+    async function fetchHeroSlides() {
       try {
-        const res = await fetch("https://ani.htss.club/api/anime/trending");
+        const res = await fetch("https://ani.htss.club/api/anime/hero-section");
         const json = await res.json();
-        setTrending(json.slice(0, 12));
+        if (Array.isArray(json)) {
+          setHeroSlides(json);
+        }
       } catch (err) {
         console.error(err);
       } finally {
         setLoading(false);
       }
     }
-    fetchTrending();
-  }, []);
+    fetchHeroSlides();
+  }, [reloadKey]);
+
+  useEffect(() => {
+    if (heroSlides.length === 0) return;
+    const interval = setInterval(() => {
+      setCurrentSlide(prev => (prev + 1) % heroSlides.length);
+    }, 6000);
+    return () => clearInterval(interval);
+  }, [heroSlides]);
 
   useEffect(() => {
     async function fetchLatest() {
       try {
         setLoadingLatest(true);
-        const res = await fetch(`https://ani.htss.club/api/anime?page=${page}&sort=latest`);
+        const res = await fetch(`https://ani.htss.club/api/anime?page=${page}&sort=${activeTab}`);
         const json = await res.json();
         if (json.success && json.data && json.data.posts) {
           setLatest(json.data.posts);
@@ -195,7 +227,7 @@ export default function AnimeHub({ onRegisterBack }: AnimeHubProps) {
       }
     }
     fetchLatest();
-  }, [page]);
+  }, [page, activeTab, reloadKey]);
 
   useEffect(() => {
     if (!selectedId && onRegisterBack) {
@@ -213,7 +245,7 @@ export default function AnimeHub({ onRegisterBack }: AnimeHubProps) {
   if (selectedId) {
     return (
       <div className="flex-1 w-full flex flex-col relative min-w-0">
-        <AnimeDetail id={selectedId} onBack={handleBack} onRegisterBack={onRegisterBack} />
+        <AnimeDetail id={selectedId} onBack={handleBack} onRegisterBack={onRegisterBack} reloadKey={reloadKey} />
       </div>
     );
   }
@@ -226,8 +258,6 @@ export default function AnimeHub({ onRegisterBack }: AnimeHubProps) {
       </div>
     );
   }
-
-  const heroAnime = trending[0];
 
   return (
     <div className="flex flex-col w-full">
@@ -289,69 +319,171 @@ export default function AnimeHub({ onRegisterBack }: AnimeHubProps) {
         </div>
       ) : (
         <>
-          {/* Hero Banner Area */}
-          {heroAnime && (
-            <div 
-              onClick={() => setSelectedId(heroAnime.id)}
-              className="relative w-full h-[400px] rounded-3xl overflow-hidden mt-6 shadow-2xl group cursor-pointer border border-white/5 backdrop-blur-3xl bg-white/[0.02]"
-            >
-              <div className="absolute inset-0 bg-[#070709]" />
-              <div className="absolute inset-0 z-0">
-                <img 
-                  src={heroAnime.posterUrl || heroAnime.poster || heroAnime.cover} 
-                  alt={heroAnime.title} 
-                  className="w-full h-full object-cover opacity-40 group-hover:scale-105 transition-transform duration-700" 
-                />
-              </div>
-              <div className="absolute inset-0 bg-gradient-to-t from-[#030305] via-[#030305]/60 to-transparent z-10" />
-              <div className="absolute right-0 top-0 w-3/4 h-full bg-gradient-to-l from-[#030305]/80 to-transparent z-10" />
-              
-              <div className="absolute bottom-0 left-0 p-12 z-20 flex flex-col gap-5 w-full">
-                <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-cyan-500/20 text-cyan-400 text-[0.65rem] font-bold border border-cyan-500/30 w-fit uppercase tracking-[0.2em] shadow-[0_0_15px_rgba(34,211,238,0.2)] backdrop-blur-md">
-                  THỊNH HÀNH SỐ 1
-                </div>
-                <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-white/70 drop-shadow-2xl tracking-tight max-w-2xl leading-[1.1]">
-                  {heroAnime.title}
-                </h1>
-                <p className="text-neutral-300 max-w-xl text-base drop-shadow-md font-medium mt-2 line-clamp-2">
-                  {heroAnime.description || heroAnime.synopsis}
-                </p>
-                <div className="flex gap-4 mt-6">
-                  <button className="group relative overflow-hidden bg-white text-black px-8 py-3.5 rounded-xl flex items-center gap-3 font-bold transition-all hover:scale-105 shadow-[0_0_40px_rgba(255,255,255,0.3)] pointer-events-none">
-                    <Play className="w-5 h-5 fill-black" />
-                    Xem Ngay
-                  </button>
-                </div>
+          {/* Premium Hero Section Slide Carousel */}
+          {heroSlides.length > 0 && (
+            <div className="relative w-full h-[420px] md:h-[460px] rounded-[2rem] overflow-hidden mt-6 shadow-2xl border border-white/5 bg-[#030305] select-none group">
+              {heroSlides.map((slide, index) => {
+                const isActive = index === currentSlide;
+                return (
+                  <div 
+                    key={slide.id}
+                    className={`absolute inset-0 z-0 transition-all duration-1000 ease-in-out ${
+                      isActive 
+                        ? "opacity-100 scale-100 pointer-events-auto" 
+                        : "opacity-0 scale-[1.02] pointer-events-none"
+                    }`}
+                  >
+                    {/* Glowing underlay effect */}
+                    <div className="absolute left-[10%] top-1/2 -translate-y-1/2 w-[350px] h-[350px] bg-red-600/10 rounded-full blur-[110px] pointer-events-none mix-blend-screen" />
+                    <div className="absolute right-[20%] top-1/4 w-[250px] h-[250px] bg-cyan-500/5 rounded-full blur-[80px] pointer-events-none mix-blend-screen" />
+
+                    {/* Backdrop Image */}
+                    <img 
+                      src={slide.backdropImage || slide.poster} 
+                      alt="" 
+                      className="absolute right-0 top-0 h-full w-[65%] object-cover object-center opacity-60 pointer-events-none select-none transition-transform duration-[8000ms] ease-out scale-100 group-hover:scale-105"
+                    />
+
+                    {/* Gradients to blend character backdrop */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-[#030305] via-[#030305]/90 via-[#030305]/65 to-transparent z-10" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-[#030305] via-transparent to-transparent z-10" />
+                    <div className="absolute inset-0 bg-gradient-to-b from-[#030305]/30 via-transparent to-transparent z-10" />
+
+                    {/* Content Area */}
+                    <div className="absolute inset-0 p-8 md:p-12 z-20 flex flex-col justify-between h-full w-full md:max-w-3xl">
+                      {/* Top Content (Badges, Title, Details, Description) */}
+                      <div className="flex flex-col gap-3">
+                        {/* Top Badges */}
+                        <div className="flex items-center gap-2">
+                          <span className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-extrabold text-[10px] uppercase tracking-wider px-3.5 py-1.5 rounded-full shadow-[0_0_15px_rgba(6,182,212,0.4)] border border-cyan-400/20">
+                            TOP {index + 1}
+                          </span>
+                          {slide.quality && (
+                            <span className="border border-white/10 bg-white/5 text-white font-bold text-[10px] uppercase tracking-wider px-3 py-1 rounded-lg backdrop-blur-md">
+                              {slide.quality}
+                            </span>
+                          )}
+                          {slide.mediaType && (
+                            <span className="border border-white/10 bg-white/5 text-white font-bold text-[10px] uppercase tracking-wider px-3 py-1 rounded-lg backdrop-blur-md">
+                              {slide.mediaType.toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Anime Title */}
+                        <h1 className="text-xl md:text-3xl font-black text-white uppercase tracking-tight leading-tight drop-shadow-2xl line-clamp-2 max-w-2xl">
+                          {slide.title}
+                        </h1>
+
+                        {/* Details (Duration / Genre) */}
+                        <div className="flex items-center text-xs font-bold text-neutral-400 gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                          <span className="text-cyan-400 font-extrabold mr-3">{slide.duration || "24m"}</span>
+                          
+                          {slide.genres && slide.genres.length > 0 && (
+                            <span className="text-white/60 font-black tracking-widest text-[10px] uppercase bg-white/5 px-2.5 py-0.5 rounded border border-white/5">
+                              # {slide.genres[0].toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Description */}
+                        <p className="text-neutral-400 max-w-2xl text-xs md:text-sm leading-relaxed line-clamp-3 font-medium drop-shadow-md mt-1">
+                          {slide.description}
+                        </p>
+                      </div>
+
+                      {/* Bottom Action Buttons */}
+                      <div className="flex items-center gap-4">
+                        <button 
+                          onClick={() => setSelectedId(slide.id)}
+                          className="group bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white font-bold text-xs uppercase tracking-widest px-8 py-3.5 rounded-xl flex items-center gap-2.5 transition-all duration-300 shadow-[0_0_20px_rgba(6,182,212,0.35)] hover:shadow-[0_0_30px_rgba(6,182,212,0.55)] cursor-pointer active:scale-95 z-30"
+                        >
+                          <Play className="w-4 h-4 fill-white ml-0.5" />
+                          Xem Ngay
+                        </button>
+
+                        <button 
+                          className="border border-white/10 hover:border-white/20 bg-white/5 hover:bg-white/10 text-white font-bold text-xs uppercase tracking-widest px-8 py-3.5 rounded-xl flex items-center gap-2.5 transition-all duration-300 cursor-pointer active:scale-95 z-30"
+                        >
+                          <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                          </svg>
+                          Lưu Phim
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Slider Indicator Dots/Bar */}
+              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 select-none">
+                {heroSlides.map((_, index) => {
+                  const isActive = index === currentSlide;
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => setCurrentSlide(index)}
+                      className={`h-1.5 rounded-full transition-all duration-500 cursor-pointer ${
+                        isActive 
+                          ? "w-8 bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]" 
+                          : "w-1.5 bg-white/20 hover:bg-white/40"
+                      }`}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}
 
-          {/* Trending Section */}
+          {/* Latest & Views Tab Section */}
           <div className="mt-14 flex flex-col gap-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <h2 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-neutral-500 tracking-tight flex items-center gap-2">
-                <TrendingUp className="w-6 h-6 text-cyan-400" /> Xu hướng hiện tại
+                <Play className="w-6 h-6 text-cyan-400" /> 
+                {activeTab === "latest" ? "Mới cập nhật" : "Xem nhiều nhất"}
               </h2>
-            </div>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5">
-              {trending.slice(1).map((anime) => (
-                <AnimeCard key={anime.id} anime={anime} onClick={() => setSelectedId(anime.id)} />
-              ))}
-            </div>
-          </div>
 
-          {/* Latest Section */}
-          <div className="mt-14 flex flex-col gap-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-neutral-500 tracking-tight flex items-center gap-2">
-                <Play className="w-6 h-6 text-cyan-400" /> Mới cập nhật
-              </h2>
+              {/* Tab Switcher Pills */}
+              <div className="grid grid-cols-2 w-60 p-1 bg-white/[0.02] backdrop-blur-md border border-white/5 rounded-xl shadow-inner select-none">
+                <button
+                  onClick={() => handleTabChange("latest")}
+                  style={{ outline: "none" }}
+                  className={`py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all duration-300 cursor-pointer text-center border-0 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 ${
+                    activeTab === "latest"
+                      ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-[0_0_15px_rgba(6,182,212,0.4)] border border-cyan-400/10"
+                      : "text-neutral-400 hover:text-white"
+                  }`}
+                >
+                  Mới nhất
+                </button>
+                <button
+                  onClick={() => handleTabChange("views")}
+                  style={{ outline: "none" }}
+                  className={`py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all duration-300 cursor-pointer text-center border-0 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 ${
+                    activeTab === "views"
+                      ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-[0_0_15px_rgba(6,182,212,0.4)] border border-cyan-400/10"
+                      : "text-neutral-400 hover:text-white"
+                  }`}
+                >
+                  Xem nhiều
+                </button>
+              </div>
             </div>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5">
-              {latest.map((anime) => (
-                <AnimeCard key={anime.id} anime={anime} onClick={() => setSelectedId(anime.id)} />
-              ))}
-            </div>
+            {loadingLatest ? (
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5">
+                {Array.from({ length: 12 }).map((_, i) => (
+                  <SkeletonCard key={i} />
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5">
+                {latest.map((anime) => (
+                  <AnimeCard key={anime.id} anime={anime} onClick={() => setSelectedId(anime.id)} />
+                ))}
+              </div>
+            )}
             
             {/* Pagination Controls */}
             <div className="flex items-center justify-center gap-4 mt-8 mb-4">

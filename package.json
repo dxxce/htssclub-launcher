@@ -1,10 +1,10 @@
 {
   "name": "htssclub",
-  "version": "0.8.2",
+  "version": "0.9.7",
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "powershell -Command \"try { if (Test-Path src/app/api) { Rename-Item src/app/api _api } ; npx next build } finally { if (Test-Path _api) { Rename-Item _api src/app/api } }\"",
+    "build": "powershell -Command \"try { if (Test-Path src/app/api) { Rename-Item src/app/api _api } ; npx.cmd next build } finally { if (Test-Path src/app/_api) { Rename-Item src/app/_api api } }\"",
     "start": "next start",
     "lint": "eslint",
     "tauri": "tauri",

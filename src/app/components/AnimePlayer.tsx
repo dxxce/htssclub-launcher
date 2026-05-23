@@ -174,28 +174,26 @@ export default function AnimePlayer({ url, episodeId, poster, title, subtitles =
 
               if (Hls.isSupported()) {
                 const hls = new Hls({
-                  maxBufferLength: 60,            // Buffer up to 60 seconds ahead
-                  maxMaxBufferLength: 180,        // Maximum allowed buffer up to 180s
-                  maxBufferSize: 200 * 1024 * 1024, // Increase buffer capacity to 200MB
-                  maxBufferHole: 0.5,             // Automatically skip small buffer gaps
-                  enableWorker: true,             // Multi-thread demuxing via Web Workers
-                  lowLatencyMode: false,          // Disable low latency mode for pre-recorded anime (deep buffering)
-                  fragLoadingTimeOut: 30000,      // Allow up to 30s for a segment to load
+                  maxBufferLength: 60,
+                  maxMaxBufferLength: 180,
+                  maxBufferSize: 200 * 1024 * 1024,
+                  maxBufferHole: 0.5,
+                  enableWorker: true,
+                  lowLatencyMode: false,
+                  fragLoadingTimeOut: 30000,
                   manifestLoadingTimeOut: 30000,
                   levelLoadingTimeOut: 30000,
-                  
-                  // Extremely robust retry strategy for weak or fluctuating CDN segments
                   manifestLoadingMaxRetry: 6,
                   manifestLoadingRetryDelay: 1000,
                   levelLoadingMaxRetry: 6,
                   levelLoadingRetryDelay: 1000,
                   fragLoadingMaxRetry: 10,
                   fragLoadingRetryDelay: 500,
-                  
                   xhrSetup: (xhr) => {
                     xhr.withCredentials = false;
                   }
                 });
+
                 hls.loadSource(url);
                 hls.attachMedia(video);
 
@@ -494,7 +492,7 @@ export default function AnimePlayer({ url, episodeId, poster, title, subtitles =
   }
 
   return (
-    <div className={`relative ${aspectRatio || 'w-full aspect-video rounded-2xl'} overflow-hidden shadow-glow-lg border border-white/5 bg-black`}>
+    <div className={`relative ${aspectRatio || 'w-full aspect-video'} overflow-hidden shadow-glow-lg border border-white/5 bg-black`}>
       <div ref={playerRef} className="w-full h-full [&_.art-loading]:!hidden [&_.art-state]:!hidden" />
       
       {isLoading && (

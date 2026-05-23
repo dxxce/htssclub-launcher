@@ -247,124 +247,7 @@ async fn fetch_game_name(shard: &str, puuid: &str, auth_token: &str, entitlement
 
 #[tauri::command]
 async fn get_riot_credentials() -> Result<RiotCredentials, String> {
-    let app_data = std::env::var("APPDATA").map_err(|e| e.to_string())?;
-    
-    // 1. Kiểm tra xem có tài khoản active được cấu hình không
-    let active_path = PathBuf::from(&app_data)
-        .join("htssclub")
-        .join("active_account.json");
-        
-    let mut selected_puuid = None;
-    if active_path.exists() {
-        if let Ok(content) = fs::read_to_string(&active_path) {
-            if let Ok(config) = serde_json::from_str::<ActiveAccountConfig>(&content) {
-                selected_puuid = config.puuid;
-            }
-        }
-    }
-
-    if let Some(puuid) = selected_puuid {
-        if puuid != "running_client" {
-            // Tìm tài khoản này trong danh sách đã lưu
-            let accounts_path = PathBuf::from(&app_data)
-                .join("htssclub")
-                .join("valorant_accounts.json");
-                
-            if accounts_path.exists() {
-                if let Ok(content) = fs::read_to_string(&accounts_path) {
-                    if let Ok(mut accounts) = serde_json::from_str::<Vec<SavedRiotAccount>>(&content) {
-                        if let Some(pos) = accounts.iter().position(|a| a.puuid == puuid) {
-                            let mut account = accounts[pos].clone();
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0);
-                                
-                            // Nếu đăng nhập bằng Credentials và hết hạn (quá 50 phút - 3000 giây)
-                            if account.login_type == "credentials" && now.saturating_sub(account.last_updated) > 3000 {
-                                if let (Some(u), Some(p)) = (&account.username, &account.password) {
-                                    // Tự động làm mới token ở chế độ nền
-                                    if let Ok((new_auth, new_ent, _)) = riot_login(u, p).await {
-                                        account.auth_token = new_auth;
-                                        account.entitlement_token = new_ent;
-                                        account.last_updated = now;
-                                        
-                                        // Lưu lại
-                                        accounts[pos] = account.clone();
-                                        if let Ok(pretty) = serde_json::to_string_pretty(&accounts) {
-                                            let _ = fs::write(&accounts_path, pretty);
-                                        }
-                                    }
-                                }
-                            } else if account.login_type == "riot_client" {
-                                // Nếu lưu bằng Riot Client, kiểm tra xem client có đang mở với tài khoản đó không để refresh
-                                if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-                                    let lockfile_path = PathBuf::from(local_app_data)
-                                        .join("Riot Games")
-                                        .join("Riot Client")
-                                        .join("Config")
-                                        .join("lockfile");
-                                        
-                                    if lockfile_path.exists() {
-                                        if let Ok(lockfile_content) = fs::read_to_string(lockfile_path) {
-                                            let parts: Vec<&str> = lockfile_content.split(':').collect();
-                                            if parts.len() >= 5 {
-                                                let l_port = parts[2].to_string();
-                                                let l_password = parts[3].to_string();
-                                                let auth_raw = format!("riot:{}", l_password);
-                                                let base64_auth = general_purpose::STANDARD.encode(auth_raw);
-                                                
-                                                let client = reqwest::Client::builder()
-                                                    .danger_accept_invalid_certs(true)
-                                                    .build()
-                                                    .unwrap_or_else(|_| reqwest::Client::new());
-                                                    
-                                                let local_url = format!("https://127.0.0.1:{}/entitlements/v1/token", l_port);
-                                                if let Ok(resp) = client.get(&local_url)
-                                                    .header("Authorization", format!("Basic {}", base64_auth))
-                                                    .send()
-                                                    .await 
-                                                {
-                                                    if let Ok(json) = resp.json::<serde_json::Value>().await {
-                                                        let running_puuid = json["subject"].as_str().unwrap_or("").to_string();
-                                                        let running_auth = json["accessToken"].as_str().unwrap_or("").to_string();
-                                                        let running_ent = json["token"].as_str().unwrap_or("").to_string();
-                                                        
-                                                        if running_puuid == account.puuid && !running_auth.is_empty() {
-                                                            account.auth_token = running_auth;
-                                                            account.entitlement_token = running_ent;
-                                                            account.last_updated = now;
-                                                            
-                                                            accounts[pos] = account.clone();
-                                                            if let Ok(pretty) = serde_json::to_string_pretty(&accounts) {
-                                                                let _ = fs::write(&accounts_path, pretty);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            return Ok(RiotCredentials {
-                                port: "0".to_string(), // dummy port
-                                password: "".to_string(), // dummy password
-                                auth_token: account.auth_token,
-                                entitlement_token: account.entitlement_token,
-                                puuid: account.puuid,
-                                shard: account.shard,
-                                game_name: Some(account.game_name),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Dự phòng: Đọc từ Riot Client đang chạy nếu không cấu hình tài khoản active khác
+    // Always read from the currently running Riot Client
     let local_app_data = std::env::var("LOCALAPPDATA").map_err(|e| e.to_string())?;
     let lockfile_path = PathBuf::from(local_app_data)
         .join("Riot Games")
@@ -372,7 +255,7 @@ async fn get_riot_credentials() -> Result<RiotCredentials, String> {
         .join("Config")
         .join("lockfile");
 
-    let lockfile_content = fs::read_to_string(lockfile_path).map_err(|e| format!("Vui lòng mở Riot Client trước khi sử dụng tính năng này! Lỗi: {}", e))?;
+    let lockfile_content = fs::read_to_string(lockfile_path).map_err(|_| "RIOT_CLIENT_NOT_RUNNING".to_string())?;
     
     // Format: name:pid:port:password:protocol
     let parts: Vec<&str> = lockfile_content.split(':').collect();
@@ -1177,7 +1060,7 @@ fn rewrite_manifest(text: &str, base_url_str: &str) -> String {
             new_text.push_str(line);
             new_text.push('\n');
         } else {
-            // It's a segment URL
+            // It's a segment URL — resolve to absolute then proxy
             if let Ok(resolved_url) = base_url.join(trimmed) {
                 let rewritten = format!(
                     "http://vstream.localhost/?url={}",
@@ -2222,6 +2105,97 @@ async fn download_and_install_update(app_handle: tauri::AppHandle, url: String) 
     std::process::exit(0);
 }
 
+#[tauri::command]
+async fn fetch_steam_sales(
+    page: Option<u32>,
+    language: Option<String>,
+    country: Option<String>,
+    specials: Option<u32>,
+    maxprice: Option<String>,
+) -> Result<String, String> {
+    let page = page.unwrap_or(1);
+    let start = (page - 1) * 25;
+    let lang = language.unwrap_or_else(|| "english".to_string());
+    let cc = country.unwrap_or_else(|| "US".to_string());
+    let specials_val = specials.unwrap_or(1);
+
+    let mut url = format!(
+        "https://store.steampowered.com/search/results/?query=&start={}&count=25&dynamic_data=&sort_by=_ASC&os=win&specials={}&infinite=1&l={}&cc={}",
+        start, specials_val, lang, cc
+    );
+
+    if let Some(ref mp) = maxprice {
+        if !mp.is_empty() {
+            url.push_str(&format!("&maxprice={}", mp));
+        }
+    }
+
+    let client = get_async_http_client();
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        .header("Accept-Language", "vi,en;q=0.9")
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi kết nối Steam: {}", e))?;
+
+    let text = resp.text().await.map_err(|e| format!("Lỗi đọc response Steam: {}", e))?;
+    Ok(text)
+}
+
+#[tauri::command]
+async fn fetch_epic_games() -> Result<String, String> {
+    let query = r#"{"query":"{ Catalog { searchStore(tag: \"", "allowCountries": "VN", "count": 40, "locale": "vi", "onSale": true, "sortBy": "currentPrice", "sortDir": "ASC") { elements { id title description keyImages { type url } price { totalPrice { fmtPrice { originalPrice discountPrice } originalPrice discountPrice } } categories { path } productSlug urlSlug catalogNs { mappings(pageType: \"productHome\") { pageSlug pageType } } } } } }"#;
+
+    // Use Epic GraphQL API
+    let body = serde_json::json!({
+        "query": "{ Catalog { searchStore(tag: \"\", allowCountries: \"VN\", count: 40, locale: \"vi\", onSale: true, sortBy: \"currentPrice\", sortDir: \"ASC\") { elements { id title description keyImages { type url } price { totalPrice { fmtPrice { originalPrice discountPrice } originalPrice discountPrice } } categories { path } productSlug urlSlug catalogNs { mappings(pageType: \"productHome\") { pageSlug pageType } } } } } }"
+    });
+    let _ = query; // suppress unused warning
+
+    let client = get_async_http_client();
+    let resp = client
+        .post("https://graphql.epicgames.com/graphql")
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        .header("Referer", "https://store.epicgames.com/")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi kết nối Epic: {}", e))?;
+
+    let text = resp.text().await.map_err(|e| format!("Lỗi đọc response Epic: {}", e))?;
+    Ok(text)
+}
+
+#[tauri::command]
+async fn open_in_browser(url: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        create_silent_command("cmd")
+            .args(["/c", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("Không thể mở trình duyệt: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Không thể mở trình duyệt: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Không thể mở trình duyệt: {}", e))?;
+    }
+    Ok(())
+}
+
+
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -2263,7 +2237,7 @@ pub fn run() {
             
             let client = get_async_http_client();
             let mut fetch_builder = client.get(&target_url)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
                 .header("Referer", "https://anime47.best/")
                 .header("Origin", "https://anime47.best")
                 .header("Accept", "*/*");
@@ -2293,6 +2267,11 @@ pub fn run() {
                 .unwrap_or("")
                 .to_string();
                 
+            let content_range = response.headers()
+                .get("content-range")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+                
             let is_manifest = target_url.contains(".m3u8") 
                 || content_type.contains("mpegurl") 
                 || content_type.contains("application/x-mpegURL");
@@ -2315,30 +2294,33 @@ pub fn run() {
                     Err(_) => Vec::new(),
                 };
                 
-                let content_type_clone = content_type.clone();
-                let target_url_clone = target_url.clone();
-                
-                // Spawn blocking for CPU-heavy decryption/cleaning task!
-                let processed_data = tauri::async_runtime::spawn_blocking(move || {
-                    if target_url_clone.contains(".vtt") || content_type_clone.contains("text/vtt") {
+                // Pass through all binary segments unchanged.
+                // TS sync byte scanning was causing fragParsingError for non-standard segments.
+                // However, for anime TS segments, we still need to find the sync byte offset
+                // to strip HTTP/CDN preamble that some servers prepend.
+                let processed_data = {
+                    let target_url_lower = target_url.to_lowercase();
+                    let content_type_lower = content_type.to_lowercase();
+                    let is_mp4 = target_url_lower.contains(".mp4") || target_url_lower.contains(".m4s") || content_type_lower.contains("mp4");
+                    if target_url_lower.contains(".vtt") || content_type_lower.contains("text/vtt") || is_mp4 {
                         bytes
                     } else {
                         let mut video_offset = None;
                         let search_limit = std::cmp::min(bytes.len().saturating_sub(188 * 3), 8000);
                         
                         for i in 0..search_limit {
-                            if bytes[i] == 0x47 && bytes[i + 188] == 0x47 && bytes[i + 376] == 0x47 {
+                            if bytes.len() > i + 376 && bytes[i] == 0x47 && bytes[i + 188] == 0x47 && bytes[i + 376] == 0x47 {
                                 video_offset = Some(i);
                                 break;
                             }
                         }
                         
                         match video_offset {
-                            Some(offset) => bytes[offset..].to_vec(),
-                            None => bytes,
+                            Some(offset) if offset > 0 => bytes[offset..].to_vec(),
+                            _ => bytes,
                         }
                     }
-                }).await.unwrap_or_default();
+                };
                 
                 let mut builder = Response::builder()
                     .status(status)
@@ -2348,6 +2330,9 @@ pub fn run() {
                     
                 if status == 206 {
                     builder = builder.header("Content-Length", processed_data.len().to_string());
+                    if let Some(r) = content_range {
+                        builder = builder.header("Content-Range", r);
+                    }
                 }
                 
                 let resp = builder.body(processed_data).unwrap();
@@ -2390,7 +2375,10 @@ pub fn run() {
         fetch_short_reels_feed,
         fetch_short_reels_detail,
         search_short_reels,
-        fetch_short_reels_hot_list
+        fetch_short_reels_hot_list,
+        fetch_steam_sales,
+        fetch_epic_games,
+        open_in_browser
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -2402,6 +2390,8 @@ pub fn run() {
       }
       Ok(())
     })
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application")
+    .run(|_app_handle, _event| {});
+
 }

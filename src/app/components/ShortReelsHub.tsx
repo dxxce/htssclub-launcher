@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ChevronLeft, Play, Sparkles, Clock, Star, Search, Tv, RefreshCw, Eye } from "lucide-react";
-import AnimePlayer from "./AnimePlayer";
+import ShortReelsPlayer from "./ShortReelsPlayer";
 
 interface ReelItem {
   key: string;
@@ -20,6 +20,7 @@ interface ReelItem {
 interface ShortReelSubtitle {
   file: string;
   label: string;
+  type?: string;
   default?: boolean;
 }
 
@@ -53,9 +54,10 @@ interface ReelModule {
 
 interface ShortReelsHubProps {
   onRegisterBack?: (cb: (() => void) | null) => void;
+  reloadKey?: number;
 }
 
-export default function ShortReelsHub({ onRegisterBack }: ShortReelsHubProps) {
+export default function ShortReelsHub({ onRegisterBack, reloadKey }: ShortReelsHubProps) {
   const [activeTab, setActiveTab] = useState<"503" | "547">("503");
   const [modules, setModules] = useState<ReelModule[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -303,9 +305,10 @@ export default function ShortReelsHub({ onRegisterBack }: ShortReelsHubProps) {
           content_tags: info.content_tags || [],
           episode_list: (info.episode_list || []).map((ep: any) => {
             const subs: ShortReelSubtitle[] = (ep.subtitle_list || []).map((sub: any) => ({
-              file: sub.subtitle || "",
+              file: sub.vtt || sub.subtitle || "",
               label: sub.display_name || sub.language || "",
-              default: sub.language === "vi-VN" || sub.language === "vi"
+              type: sub.type || "",
+              default: sub.language === "vi-VN" || sub.language === "vi" || sub.type === "original"
             }));
             return {
               id: ep.id,
@@ -338,7 +341,14 @@ export default function ShortReelsHub({ onRegisterBack }: ShortReelsHubProps) {
   // Load feed on mount or tab change
   useEffect(() => {
     fetchFeed();
-  }, [activeTab, fetchFeed]);
+  }, [activeTab, fetchFeed, reloadKey]);
+
+  // Reload selected series detail when global reload triggers
+  useEffect(() => {
+    if (selectedSeries) {
+      fetchSeriesDetail(selectedSeries.key);
+    }
+  }, [reloadKey]);
 
   // Debounce search query to prevent rapid network calls
   useEffect(() => {
@@ -679,7 +689,7 @@ export default function ShortReelsHub({ onRegisterBack }: ShortReelsHubProps) {
                 <div className="w-full lg:w-[400px] flex-shrink-0">
                   <div className="w-full aspect-[9/16] overflow-hidden relative">
                     {currentEpisode ? (
-                      <AnimePlayer
+                      <ShortReelsPlayer
                         url={currentEpisode.external_audio_h264_m3u8 || currentEpisode.external_audio_h265_m3u8}
                         episodeId={currentEpisode.id}
                         poster={currentEpisode.cover || seriesDetail.cover}

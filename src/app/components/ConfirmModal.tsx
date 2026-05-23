@@ -6,10 +6,11 @@ import { useEffect, useState } from "react";
 export interface ConfirmOptions {
   title?: string;
   message: string;
-  onConfirm: () => void;
+  onConfirm?: () => void;
   onCancel?: () => void;
   confirmText?: string;
   cancelText?: string;
+  okLabel?: string;
   type?: "danger" | "warning" | "info";
 }
 
@@ -29,7 +30,7 @@ export default function ConfirmModal({ config, onClose }: ConfirmModalProps) {
 
   const type = config.type || "danger";
   const title = config.title || "Xác nhận";
-  const confirmText = config.confirmText || "Đồng ý";
+  const confirmText = config.confirmText || config.okLabel || "Đồng ý";
   const cancelText = config.cancelText || "Hủy bỏ";
 
   const handleClose = (confirmed: boolean) => {
@@ -37,7 +38,9 @@ export default function ConfirmModal({ config, onClose }: ConfirmModalProps) {
     setTimeout(() => {
       onClose();
       if (confirmed) {
-        config.onConfirm();
+        if (config.onConfirm) {
+          config.onConfirm();
+        }
       } else if (config.onCancel) {
         config.onCancel();
       }
