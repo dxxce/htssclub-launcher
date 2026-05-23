@@ -1090,38 +1090,67 @@ async fn check_discord_running() -> bool {
     }
 }
 
-#[tauri::command]
-async fn check_equicord_installed() -> bool {
-    // 1. Kiểm tra thư mục cấu hình Roaming AppData của Equicord
-    if let Ok(app_data) = std::env::var("APPDATA") {
-        let equicord_dir = PathBuf::from(&app_data).join("Equicord");
-        if equicord_dir.exists() {
-            return true;
-        }
+fn parse_version(s: &str) -> Option<Vec<u32>> {
+    let parts: Vec<u32> = s.split('.')
+        .map(|p| p.parse::<u32>().unwrap_or(0))
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts)
     }
+}
 
-    // 2. Quét thư mục Local AppData Discord xem có bản vá app hay chưa
-    let local_app_data = match std::env::var("LOCALAPPDATA") {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-    let discord_dir = PathBuf::from(&local_app_data).join("Discord");
-    if discord_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&discord_dir) {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                            if name.starts_with("app-") {
-                                // Kiểm tra nếu tồn tại resources/app (bản vá Electron)
-                                let patch_path = path.join("resources").join("app");
-                                if patch_path.exists() {
-                                    return true;
+fn get_latest_discord_app_dir(discord_dir: &std::path::Path) -> Option<PathBuf> {
+    let entries = fs::read_dir(discord_dir).ok()?;
+    let mut latest_dir = None;
+    let mut latest_version: Option<Vec<u32>> = None;
+
+    for entry in entries {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with("app-") {
+                        let version_str = &name[4..];
+                        if let Some(version) = parse_version(version_str) {
+                            match latest_version {
+                                None => {
+                                    latest_version = Some(version);
+                                    latest_dir = Some(path);
+                                }
+                                Some(ref lv) => {
+                                    if version > *lv {
+                                        latest_version = Some(version);
+                                        latest_dir = Some(path);
+                                    }
                                 }
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+    latest_dir
+}
+
+#[tauri::command]
+async fn check_equicord_installed() -> bool {
+    let local_app_data = match std::env::var("LOCALAPPDATA") {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+
+    let discord_branches = ["Discord", "DiscordPTB", "DiscordCanary", "DiscordDevelopment"];
+
+    for branch in &discord_branches {
+        let discord_dir = PathBuf::from(&local_app_data).join(branch);
+        if discord_dir.exists() {
+            if let Some(latest_app_dir) = get_latest_discord_app_dir(&discord_dir) {
+                let patch_path = latest_app_dir.join("resources").join("app");
+                if patch_path.exists() {
+                    return true;
                 }
             }
         }
