@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { id: "anime", label: "Anime", icon: Film },
   { id: "short_reels", label: "Phim Ngắn", icon: Compass },
   { id: "valorant", label: "Valorant", icon: Gamepad2 },
+  { id: "deals", label: "Ưu đãi Game", icon: Sparkles },
   { id: "discord", label: "Discord", icon: MessageSquare },
   { id: "translation", label: "Dịch & Giọng nói", icon: Languages },
 ];
@@ -309,7 +310,7 @@ export default function HomePage() {
           </div>
         </div>
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto px-6 pb-6 custom-scrollbar relative z-10 flex flex-col min-w-0">
+        <div className={`flex-1 px-6 pb-6 custom-scrollbar relative z-10 flex flex-col min-w-0 ${activeNav === "deals" ? "overflow-hidden" : "overflow-y-auto"}`}>
           {visitedTabs.includes("valorant") && (
             <div className={activeNav === "valorant" ? "flex flex-col flex-1 min-w-0" : "hidden"}>
               <ValorantHub reloadKey={reloadKey} />
@@ -333,6 +334,11 @@ export default function HomePage() {
           {visitedTabs.includes("translation") && (
             <div className={activeNav === "translation" ? "flex flex-col flex-1 min-w-0" : "hidden"}>
               <TranslationHub reloadKey={reloadKey} />
+            </div>
+          )}
+          {visitedTabs.includes("deals") && (
+            <div className={activeNav === "deals" ? "flex flex-col flex-1 min-h-0 min-w-0" : "hidden"}>
+              <CombinedDeals />
             </div>
           )}
           
@@ -424,10 +430,7 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Combined Game Deals Section (Full Width) */}
-            <div className="flex flex-col min-w-0">
-              <CombinedDeals />
-            </div>
+
           </div>
         </div>
         {confirmConfig && (

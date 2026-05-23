@@ -2112,6 +2112,8 @@ async fn fetch_steam_sales(
     country: Option<String>,
     specials: Option<u32>,
     maxprice: Option<String>,
+    hidef2p: Option<u32>,
+    ndl: Option<u32>,
 ) -> Result<String, String> {
     let page = page.unwrap_or(1);
     let start = (page - 1) * 25;
@@ -2129,6 +2131,12 @@ async fn fetch_steam_sales(
             url.push_str(&format!("&maxprice={}", mp));
         }
     }
+    if let Some(h) = hidef2p {
+        url.push_str(&format!("&hidef2p={}", h));
+    }
+    if let Some(n) = ndl {
+        url.push_str(&format!("&ndl={}", n));
+    }
 
     let client = get_async_http_client();
     let resp = client
@@ -2144,27 +2152,138 @@ async fn fetch_steam_sales(
 }
 
 #[tauri::command]
-async fn fetch_epic_games() -> Result<String, String> {
-    let query = r#"{"query":"{ Catalog { searchStore(tag: \"", "allowCountries": "VN", "count": 40, "locale": "vi", "onSale": true, "sortBy": "currentPrice", "sortDir": "ASC") { elements { id title description keyImages { type url } price { totalPrice { fmtPrice { originalPrice discountPrice } originalPrice discountPrice } } categories { path } productSlug urlSlug catalogNs { mappings(pageType: \"productHome\") { pageSlug pageType } } } } } }"#;
-
-    // Use Epic GraphQL API
-    let body = serde_json::json!({
-        "query": "{ Catalog { searchStore(tag: \"\", allowCountries: \"VN\", count: 40, locale: \"vi\", onSale: true, sortBy: \"currentPrice\", sortDir: \"ASC\") { elements { id title description keyImages { type url } price { totalPrice { fmtPrice { originalPrice discountPrice } originalPrice discountPrice } } categories { path } productSlug urlSlug catalogNs { mappings(pageType: \"productHome\") { pageSlug pageType } } } } } }"
-    });
-    let _ = query; // suppress unused warning
+async fn fetch_steam_game_details(
+    app_id: String,
+    language: Option<String>,
+) -> Result<String, String> {
+    let lang = language.unwrap_or_else(|| "vietnamese".to_string());
+    let url = format!(
+        "https://store.steampowered.com/api/appdetails?appids={}&l={}",
+        app_id, lang
+    );
 
     let client = get_async_http_client();
     let resp = client
-        .post("https://graphql.epicgames.com/graphql")
-        .header("Content-Type", "application/json")
+        .get(&url)
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-        .header("Referer", "https://store.epicgames.com/")
-        .json(&body)
+        .header("Accept-Language", "vi,en;q=0.9")
+        .send()
+        .await
+        .map_err(|e| format!("L?i k?t n?i Steam details: {}", e))?;
+
+    let text = resp.text().await.map_err(|e| format!("L?i ??c response Steam details: {}", e))?;
+    
+    // Scrape store page for countdown
+    let mut countdown_text = None;
+    let store_url = format!("https://store.steampowered.com/app/{}", app_id);
+    if let Ok(store_resp) = client.get(&store_url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        .header("Cookie", "wants_mature_content=1; birthtime=189302400; lastagecheckage=1-0-1976")
+        .send()
+        .await {
+            if let Ok(html) = store_resp.text().await {
+                if let Some(idx) = html.find("class=\"game_purchase_discount_countdown\"") {
+                    if let Some(start) = html[idx..].find('>') {
+                        if let Some(end) = html[idx + start..].find('<') {
+                            let parsed_text = html[idx + start + 1..idx + start + end].trim().to_string();
+                            if !parsed_text.is_empty() {
+                                countdown_text = Some(parsed_text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+    // Inject countdown text into JSON
+    if let Some(countdown) = countdown_text {
+        if let Ok(mut json_val) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(price_overview) = json_val.get_mut(&app_id)
+                .and_then(|v| v.get_mut("data"))
+                .and_then(|v| v.get_mut("price_overview")) {
+                    if let Some(price_map) = price_overview.as_object_mut() {
+                        price_map.insert("discount_end_date".to_string(), serde_json::Value::String(countdown));
+                    }
+            }
+            if let Ok(new_text) = serde_json::to_string(&json_val) {
+                return Ok(new_text);
+            }
+        }
+    }
+
+    Ok(text)
+}
+
+fn is_valid_free_game(el: &serde_json::Value) -> bool {
+    if let Some(promotions) = el.get("promotions") {
+        if promotions.is_null() {
+            return false;
+        }
+        
+        // Check active promotional offers
+        if let Some(offers_array) = promotions.get("promotionalOffers").and_then(|a| a.as_array()) {
+            for group in offers_array {
+                if let Some(offers) = group.get("promotionalOffers").and_then(|a| a.as_array()) {
+                    for offer in offers {
+                        if offer.get("discountSetting")
+                            .and_then(|d| d.get("discountPercentage"))
+                            .map(|v| v.as_f64() == Some(0.0) || v.as_i64() == Some(0))
+                            .unwrap_or(false)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Check upcoming promotional offers
+        if let Some(upcoming_array) = promotions.get("upcomingPromotionalOffers").and_then(|a| a.as_array()) {
+            for group in upcoming_array {
+                if let Some(offers) = group.get("promotionalOffers").and_then(|a| a.as_array()) {
+                    for offer in offers {
+                        if offer.get("discountSetting")
+                            .and_then(|d| d.get("discountPercentage"))
+                            .map(|v| v.as_f64() == Some(0.0) || v.as_i64() == Some(0))
+                            .unwrap_or(false)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+#[tauri::command]
+async fn fetch_epic_games() -> Result<String, String> {
+    let client = get_async_http_client();
+    let resp = client
+        .get("https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=vi&country=VN&allowCountries=VN")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
         .send()
         .await
         .map_err(|e| format!("Lỗi kết nối Epic: {}", e))?;
 
-    let text = resp.text().await.map_err(|e| format!("Lỗi đọc response Epic: {}", e))?;
+    let text = resp.text().await.map_err(|e| format!("Lá»—i Ä‘á» c response Epic: {}", e))?;
+    
+    // Filter out non-free games from the JSON elements
+    if let Ok(mut data) = serde_json::from_str::<serde_json::Value>(&text) {
+        if let Some(elements) = data.get_mut("data")
+            .and_then(|d| d.get_mut("Catalog"))
+            .and_then(|c| c.get_mut("searchStore"))
+            .and_then(|s| s.get_mut("elements"))
+            .and_then(|e| e.as_array_mut())
+        {
+            elements.retain(|el| is_valid_free_game(el));
+        }
+        if let Ok(filtered_text) = serde_json::to_string(&data) {
+            return Ok(filtered_text);
+        }
+    }
+
     Ok(text)
 }
 
@@ -2377,6 +2496,7 @@ pub fn run() {
         search_short_reels,
         fetch_short_reels_hot_list,
         fetch_steam_sales,
+        fetch_steam_game_details,
         fetch_epic_games,
         open_in_browser
     ])

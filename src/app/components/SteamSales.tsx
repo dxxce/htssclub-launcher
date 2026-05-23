@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { 
   Search, RotateCw, ChevronLeft, ChevronRight, Gamepad2, 
   ExternalLink, Sparkles, HelpCircle, ArrowUpRight,
-  ChevronDown, X
+  ChevronDown, X, Play, Clock
 } from "lucide-react";
 
 interface SteamGame {
@@ -238,10 +238,29 @@ interface SteamGenre {
   description: string;
 }
 
+interface SteamMovie {
+  id: number;
+  name: string;
+  thumbnail: string;
+  webm?: {
+    480: string;
+    max: string;
+  };
+  mp4?: {
+    480: string;
+    max: string;
+  };
+  dash_av1?: string;
+  dash_h264?: string;
+  hls_h264?: string;
+  highlight: boolean;
+}
+
 interface SteamPriceOverview {
   discount_percent: number;
   initial_formatted: string;
   final_formatted: string;
+  discount_end_date?: string;
 }
 
 interface SteamGameDetails {
@@ -252,6 +271,7 @@ interface SteamGameDetails {
   publishers?: string[];
   genres?: SteamGenre[];
   screenshots?: SteamScreenshot[];
+  movies?: SteamMovie[];
   price_overview?: SteamPriceOverview;
   is_free?: boolean;
   release_date?: {
@@ -262,6 +282,12 @@ interface SteamGameDetails {
     mac: boolean;
     linux: boolean;
   };
+}
+
+interface HistoricalLow {
+  priceUsd: string;
+  priceFormatted: string;
+  date: string;
 }
 
 interface SteamGameDetailModalProps {
@@ -278,6 +304,53 @@ export function SteamGameDetailModal({ appId, gameTitle, fallbackImage, onClose,
   const [details, setDetails] = useState<SteamGameDetails | null>(null);
   const [activeImage, setActiveImage] = useState<string>(fallbackImage);
   const [mounted, setMounted] = useState(false);
+  const [isPlayingVideo, setIsPlayingVideo] = useState(false);
+  const [activeMovie, setActiveMovie] = useState<SteamMovie | null>(null);
+  const [historicalLow, setHistoricalLow] = useState<HistoricalLow | null>(null);
+  const [loadingHistorical, setLoadingHistorical] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    let hlsInstance: any = null;
+    const video = videoRef.current;
+
+    if (isPlayingVideo && activeMovie && video) {
+      const hlsUrl = activeMovie.hls_h264 || "";
+      if (hlsUrl) {
+        import("hls.js").then(({ default: Hls }) => {
+          if (!videoRef.current) return;
+          if (Hls.isSupported()) {
+            hlsInstance = new Hls();
+            hlsInstance.loadSource(hlsUrl);
+            hlsInstance.attachMedia(video);
+            hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+              video.play().catch(err => console.log("Autoplay blocked:", err));
+            });
+          } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+            video.src = hlsUrl;
+            video.addEventListener("loadedmetadata", () => {
+              video.play().catch(err => console.log("Autoplay blocked:", err));
+            });
+          }
+        });
+      } else {
+        const staticUrl = activeMovie.mp4?.max || activeMovie.mp4?.['480'] || activeMovie.webm?.max || "";
+        if (staticUrl) {
+          video.src = staticUrl.replace("http://", "https://");
+          video.play().catch(err => console.log("Autoplay blocked:", err));
+        }
+      }
+    }
+
+    return () => {
+      if (hlsInstance) {
+        hlsInstance.destroy();
+      }
+      if (video) {
+        video.src = "";
+      }
+    };
+  }, [isPlayingVideo, activeMovie]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -318,6 +391,79 @@ export function SteamGameDetailModal({ appId, gameTitle, fallbackImage, onClose,
       active = false;
     };
   }, [appId]);
+
+  useEffect(() => {
+    if (!details) return;
+
+    let active = true;
+    const fetchHistoricalLow = async () => {
+      setLoadingHistorical(true);
+      try {
+        const searchRes = await fetch(`https://www.cheapshark.com/api/1.0/games?steamAppID=${appId}`);
+        if (!searchRes.ok) {
+          if (active) setLoadingHistorical(false);
+          return;
+        }
+        const searchData = await searchRes.json();
+        
+        if (active && Array.isArray(searchData) && searchData.length > 0) {
+          const gameID = searchData[0].gameID;
+          
+          const detailRes = await fetch(`https://www.cheapshark.com/api/1.0/games?id=${gameID}`);
+          if (!detailRes.ok) {
+            if (active) setLoadingHistorical(false);
+            return;
+          }
+          const detailData = await detailRes.json();
+          
+          if (active && detailData.cheapestPriceEver) {
+            const price = parseFloat(detailData.cheapestPriceEver.price);
+            
+            // Calculate regional ratio dynamically using actual base prices
+            let regionalRatio = 12700; // Fallback to 50% of standard exchange rate
+            const steamDeal = detailData.deals?.find((d: any) => d.storeID === "1");
+            if (steamDeal && details.price_overview) {
+              const retailUsd = parseFloat(steamDeal.retailPrice);
+              const retailVnd = details.price_overview.initial / 100;
+              if (retailUsd > 0 && retailVnd > 0) {
+                regionalRatio = retailVnd / retailUsd;
+              }
+            }
+            
+            const vndPrice = price * regionalRatio;
+            const formatted = vndPrice === 0 
+              ? "Miễn phí"
+              : new Intl.NumberFormat("vi-VN", {
+                  style: "currency",
+                  currency: "VND",
+                  maximumFractionDigits: 0
+                }).format(vndPrice);
+            
+            const dateStr = detailData.cheapestPriceEver.date 
+              ? new Date(detailData.cheapestPriceEver.date * 1000).toLocaleDateString("vi-VN") 
+              : "";
+              
+            setHistoricalLow({
+              priceUsd: detailData.cheapestPriceEver.price,
+              priceFormatted: formatted,
+              date: dateStr
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Lỗi lấy giá thấp nhất lịch sử:", err);
+      } finally {
+        if (active) {
+          setLoadingHistorical(false);
+        }
+      }
+    };
+
+    fetchHistoricalLow();
+    return () => {
+      active = false;
+    };
+  }, [details, appId]);
 
   // Click outside to close helper
   const modalRef = useRef<HTMLDivElement>(null);
@@ -383,14 +529,50 @@ export function SteamGameDetailModal({ appId, gameTitle, fallbackImage, onClose,
           /* Real Details Content */
           <div className="overflow-y-auto overflow-x-hidden flex-1 no-scrollbar">
             
-            {/* Top Large Artwork Banner */}
-            <div className="relative h-72 md:h-[420px] w-full overflow-hidden bg-neutral-950 border-b border-white/5">
-              <img 
-                src={activeImage} 
-                alt="" 
-                className="w-full h-full object-cover animate-fade-in"
-              />
-              <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#09090f] to-transparent" />
+            {/* Top Large Artwork Banner / Video Player */}
+            <div className="relative h-72 md:h-[420px] w-full overflow-hidden bg-neutral-950 border-b border-white/5 group/banner">
+              {isPlayingVideo && activeMovie ? (
+                <div className="relative w-full h-full">
+                  <video 
+                    ref={videoRef}
+                    controls
+                    playsInline
+                    className="w-full h-full object-cover animate-fade-in"
+                  />
+                  <button
+                    onClick={() => setIsPlayingVideo(false)}
+                    className="absolute top-4 left-4 z-[60] px-3 py-1.5 bg-black/85 hover:bg-neutral-900 border border-white/10 rounded-lg text-[10px] font-bold text-white flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <span>← Quay lại ảnh</span>
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <img 
+                    src={activeImage} 
+                    alt="" 
+                    className="w-full h-full object-cover animate-fade-in"
+                  />
+                  <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#09090f] to-transparent" />
+                  
+                  {details.movies && details.movies.length > 0 && !details.screenshots?.some(s => s.path_full === activeImage) && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <button
+                        onClick={() => {
+                          const firstMovie = details.movies?.[0];
+                          if (firstMovie) {
+                            setActiveMovie(firstMovie);
+                            setIsPlayingVideo(true);
+                          }
+                        }}
+                        className="w-16 h-16 rounded-full bg-cyan-500/90 hover:bg-cyan-400 text-black flex items-center justify-center shadow-[0_0_30px_rgba(6,182,212,0.5)] active:scale-95 hover:scale-110 transition-all cursor-pointer group"
+                      >
+                        <Play className="w-7 h-7 fill-black ml-1 group-hover:scale-110 transition-transform" />
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Content Area */}
@@ -443,17 +625,53 @@ export function SteamGameDetailModal({ appId, gameTitle, fallbackImage, onClose,
                   </div>
                 )}
 
-                {/* Screenshots Gallery */}
-                {details.screenshots && details.screenshots.length > 0 && (
+                 {/* Media Gallery (Screenshots & Trailers) */}
+                {((details.movies && details.movies.length > 0) || (details.screenshots && details.screenshots.length > 0)) && (
                   <div>
-                    <h4 className="text-xs uppercase font-bold tracking-widest text-neutral-400 mb-2.5">Hình ảnh chi tiết (Click để xem)</h4>
-                    <div className="flex items-center gap-3 overflow-x-auto pb-2 custom-scrollbar">
-                      {details.screenshots.map((shot) => (
+                    <h4 className="text-xs uppercase font-bold tracking-widest text-neutral-400 mb-2.5">Hình ảnh & Video chi tiết (Click để xem)</h4>
+                    <div className="flex items-center gap-3 overflow-x-auto pb-2 custom-scrollbar no-scrollbar">
+                      
+                      {/* Trailers */}
+                      {details.movies?.map((movie) => {
+                        return (
+                          <div 
+                            key={`movie-${movie.id}`}
+                            onClick={() => {
+                              setActiveMovie(movie);
+                              setIsPlayingVideo(true);
+                            }}
+                            className={`flex-shrink-0 w-32 aspect-[16/9] rounded-lg overflow-hidden border cursor-pointer hover:scale-95 transition-all duration-300 relative bg-neutral-950 ${
+                              isPlayingVideo && activeMovie?.id === movie.id
+                                ? "border-cyan-500 scale-95 shadow-[0_0_10px_rgba(6,182,212,0.3)]" 
+                                : "border-white/5 hover:border-white/20"
+                            }`}
+                          >
+                            <img 
+                              src={movie.thumbnail} 
+                              alt="" 
+                              className="w-full h-full object-cover opacity-75"
+                            />
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/30 hover:bg-black/10 transition-colors">
+                              <div className="w-8 h-8 rounded-full bg-cyan-500 flex items-center justify-center shadow-md">
+                                <Play className="w-3.5 h-3.5 fill-black text-black ml-0.5" />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Screenshots */}
+                      {details.screenshots?.map((shot) => (
                         <div 
-                          key={shot.id}
-                          onClick={() => setActiveImage(shot.path_full)}
+                          key={`screenshot-${shot.id}`}
+                          onClick={() => {
+                            setIsPlayingVideo(false);
+                            setActiveImage(shot.path_full);
+                          }}
                           className={`flex-shrink-0 w-32 aspect-[16/9] rounded-lg overflow-hidden border cursor-pointer hover:scale-95 transition-all duration-300 ${
-                            activeImage === shot.path_full ? "border-cyan-500 scale-95 shadow-[0_0_10px_rgba(6,182,212,0.3)]" : "border-white/5 hover:border-white/20"
+                            !isPlayingVideo && activeImage === shot.path_full 
+                              ? "border-cyan-500 scale-95 shadow-[0_0_10px_rgba(6,182,212,0.3)]" 
+                              : "border-white/5 hover:border-white/20"
                           }`}
                         >
                           <img 
@@ -468,7 +686,7 @@ export function SteamGameDetailModal({ appId, gameTitle, fallbackImage, onClose,
                 )}
               </div>
 
-              {/* Right Sidebar Action block */}
+                           {/* Right Sidebar Action block */}
               <div className="bg-[#0e0e16]/60 border border-white/5 rounded-xl p-5 flex flex-col justify-between space-y-6 h-fit backdrop-blur-md">
                 
                 {/* Price Display */}
@@ -515,6 +733,24 @@ export function SteamGameDetailModal({ appId, gameTitle, fallbackImage, onClose,
                       {details.platforms?.linux && <span title="Linux">Linux</span>}
                     </span>
                   </div>
+                  {loadingHistorical ? (
+                    <div className="flex flex-col text-[11px] text-neutral-400 border-t border-white/5 pt-2.5 mt-2.5 space-y-2 animate-pulse">
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-neutral-500">Thấp nhất lịch sử (VND):</span>
+                      <div className="h-4 bg-white/5 rounded-md w-1/2" />
+                      <div className="h-3 bg-white/5 rounded-md w-2/3" />
+                    </div>
+                  ) : historicalLow ? (
+                    <div className="flex flex-col text-[11px] text-neutral-400 border-t border-white/5 pt-2.5 mt-2.5">
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-neutral-500 mb-1">Thấp nhất lịch sử (VND):</span>
+                      <span className="text-white font-bold text-xs flex items-baseline gap-1.5">
+                        {historicalLow.priceFormatted}
+                        <span className="text-neutral-500 font-medium text-[10px]">(${historicalLow.priceUsd})</span>
+                      </span>
+                      {historicalLow.date && (
+                        <span className="text-[9px] text-neutral-500 mt-0.5">Vào ngày {historicalLow.date}</span>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
 
                 {/* Major Actions */}

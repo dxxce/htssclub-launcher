@@ -16,6 +16,23 @@ interface EpicGame {
   discountPct: number;
   slug: string;
   isFree: boolean;
+  isUpcoming?: boolean;
+  upcomingDate?: string;
+}
+
+function formatUpcomingDate(dateStr?: string): string {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes} - ${day}/${month}`;
+  } catch {
+    return "";
+  }
 }
 
 interface EpicElement {
@@ -34,6 +51,28 @@ interface EpicElement {
     };
   };
   categories?: { path: string }[];
+  promotions?: {
+    promotionalOffers?: {
+      promotionalOffers?: {
+        startDate: string;
+        endDate: string;
+        discountSetting?: {
+          discountType: string;
+          discountPercentage: number;
+        };
+      }[];
+    }[];
+    upcomingPromotionalOffers?: {
+      promotionalOffers?: {
+        startDate: string;
+        endDate: string;
+        discountSetting?: {
+          discountType: string;
+          discountPercentage: number;
+        };
+      }[];
+    }[];
+  };
   productSlug?: string;
   urlSlug?: string;
   catalogNs?: {
@@ -174,22 +213,33 @@ function EpicGameCard({ game, handleCardClick, handleOpenGame }: EpicGameCardPro
               <span className="bg-emerald-500 text-black font-black text-[10px] px-2 py-1 rounded-md leading-none select-none tracking-wider uppercase animate-pulse">
                 MIỄN PHÍ
               </span>
+            ) : game.isUpcoming ? (
+              <div className="flex flex-col justify-center gap-1">
+                <span className="bg-blue-500 text-white font-black text-[10px] px-2 py-1 rounded-md leading-none select-none tracking-wider uppercase w-fit">
+                  SẮP MỞ KHÓA
+                </span>
+                {game.upcomingDate && (
+                  <span className="text-[10px] text-neutral-400 leading-none">
+                    Mở: {formatUpcomingDate(game.upcomingDate)}
+                  </span>
+                )}
+              </div>
             ) : hasDiscount ? (
               <>
                 <span className="bg-violet-500 text-black font-black text-[10px] px-1.5 py-1 rounded-md leading-none select-none">
                   -{game.discountPct}%
                 </span>
                 <div className="flex flex-col justify-center">
-                  <span className="text-[9px] text-neutral-500 line-through leading-none">
+                  <span className="text-xs text-neutral-400 line-through font-semibold leading-none mb-1">
                     {originalPriceDisplay}
                   </span>
-                  <span className="text-xs font-black text-violet-400 mt-0.5 leading-none">
+                  <span className="text-sm font-black text-violet-400 mt-0.5 leading-none">
                     {game.discountPrice}
                   </span>
                 </div>
               </>
             ) : (
-              <span className="text-xs font-black leading-none text-neutral-200">
+              <span className="text-sm font-black leading-none text-neutral-200">
                 {game.discountPrice || "Free"}
               </span>
             )}
@@ -272,8 +322,26 @@ export default function EpicSales({ isMini = false }: { isMini?: boolean }) {
         // Slug
         const slug = el.productSlug || el.urlSlug || el.catalogNs?.mappings?.[0]?.pageSlug || "";
 
-        // Check if it is currently free
-        const isFree = discountPriceNumeric === 0 || el.categories?.some((cat) => cat.path === "freegames") || false;
+        // Check if it is currently free or upcoming free
+        let isFree = discountPriceNumeric === 0;
+        let isUpcoming = false;
+        let upcomingDate = "";
+
+        if (el.promotions?.promotionalOffers && el.promotions.promotionalOffers.length > 0) {
+          const offers = el.promotions.promotionalOffers[0].promotionalOffers;
+          if (offers && offers.length > 0) {
+            isFree = offers[0].discountSetting?.discountPercentage === 0;
+          }
+        } else if (el.promotions?.upcomingPromotionalOffers && el.promotions.upcomingPromotionalOffers.length > 0) {
+          const offers = el.promotions.upcomingPromotionalOffers[0].promotionalOffers;
+          if (offers && offers.length > 0) {
+            isFree = false;
+            isUpcoming = true;
+            upcomingDate = offers[0].startDate;
+          }
+        } else {
+          isFree = false;
+        }
 
         // Filter out items without valid slugs or titles
         if (el.title && slug) {
@@ -287,15 +355,19 @@ export default function EpicSales({ isMini = false }: { isMini?: boolean }) {
             discountPriceNumeric,
             discountPct,
             slug,
-            isFree
+            isFree,
+            isUpcoming,
+            upcomingDate
           });
         }
       });
 
-      // Sort: show free games first, then discounted games
+      // Sort: show free games first, then upcoming free games, then discounted games
       parsed.sort((a, b) => {
         if (a.isFree && !b.isFree) return -1;
         if (!a.isFree && b.isFree) return 1;
+        if (a.isUpcoming && !b.isUpcoming) return -1;
+        if (!a.isUpcoming && b.isUpcoming) return 1;
         return b.discountPct - a.discountPct;
       });
 
