@@ -4,8 +4,10 @@ import { useEffect, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { 
   Languages, Mic, Volume2, VolumeX, Play, Trash2, Plus, 
-  Volume1, RotateCw, Settings, Save, ShieldAlert, Sparkles, Check, ChevronDown, Copy
+  Volume1, RotateCw, Settings, Save, ShieldAlert, Sparkles, Check, ChevronDown, Copy,
+  Radio, MicOff, Music, Upload, Wand2, Square
 } from "lucide-react";
+import { Jungle, semitonesToMult } from "./voiceFx";
 
 interface PresetItem {
   id: string;
@@ -279,6 +281,51 @@ export default function TranslationHub({ reloadKey }: { reloadKey?: number }) {
     return "default";
   });
 
+  // ── Voice changer (Edge neural voices + server-side pitch/rate) ──
+  const [voiceList, setVoiceList] = useState<{ id: string; label: string; locale: string; gender: string; flag: string }[]>([]);
+  const [useVoiceChanger, setUseVoiceChanger] = useState(() => {
+    if (typeof window !== "undefined") return localStorage.getItem("htss_use_voice_changer") === "true";
+    return false;
+  });
+  const [selectedVoice, setSelectedVoice] = useState(() => {
+    if (typeof window !== "undefined") return localStorage.getItem("htss_selected_voice") || "vi-VN-HoaiMyNeural";
+    return "vi-VN-HoaiMyNeural";
+  });
+  const [voicePitch, setVoicePitch] = useState(() => {
+    if (typeof window !== "undefined") {
+      const v = localStorage.getItem("htss_voice_pitch");
+      return v === null ? 0 : parseInt(v, 10);
+    }
+    return 0;
+  });
+  const [voiceRate, setVoiceRate] = useState(() => {
+    if (typeof window !== "undefined") {
+      const v = localStorage.getItem("htss_voice_rate");
+      return v === null ? 0 : parseInt(v, 10);
+    }
+    return 0;
+  });
+
+  // ── Live mic voice changer (real-time) ──
+  const [liveActive, setLiveActive] = useState(false);
+  const [liveSemitones, setLiveSemitones] = useState(() => {
+    if (typeof window !== "undefined") {
+      const v = localStorage.getItem("htss_live_semitones");
+      return v === null ? -4 : parseInt(v, 10);
+    }
+    return -4;
+  });
+  const [liveStatus, setLiveStatus] = useState("");
+  const liveCtxRef = useRef<AudioContext | null>(null);
+  const liveStreamRef = useRef<MediaStream | null>(null);
+  const liveJungleRef = useRef<Jungle | null>(null);
+
+  // ── MP3 Soundboard ──
+  interface SoundClip { id: string; name: string; dataUrl: string; }
+  const [soundClips, setSoundClips] = useState<SoundClip[]>([]);
+  const [playingClipId, setPlayingClipId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Soundboard Presets
   const [presets, setPresets] = useState<PresetItem[]>([]);
   const [showNotification, setShowNotification] = useState("");
@@ -333,8 +380,190 @@ export default function TranslationHub({ reloadKey }: { reloadKey?: number }) {
     localStorage.setItem("htss_voice_tone", voiceTone);
   }, [voiceTone]);
 
-  const handleInstallVirtualMic = async () => {
-    if (isInstallingMic) return;
+  // Voice changer persistence
+  useEffect(() => { localStorage.setItem("htss_use_voice_changer", String(useVoiceChanger)); }, [useVoiceChanger]);
+  useEffect(() => { localStorage.setItem("htss_selected_voice", selectedVoice); }, [selectedVoice]);
+  useEffect(() => { localStorage.setItem("htss_voice_pitch", String(voicePitch)); }, [voicePitch]);
+  useEffect(() => { localStorage.setItem("htss_voice_rate", String(voiceRate)); }, [voiceRate]);
+
+  // Load the available neural voices from the backend.
+  useEffect(() => {
+    invoke<{ id: string; label: string; locale: string; gender: string; flag: string }[]>("list_tts_voices")
+      .then((voices) => setVoiceList(voices))
+      .catch((err) => console.error("Lỗi tải danh sách giọng:", err));
+  }, []);
+
+  // Live voice changer persistence
+  useEffect(() => { localStorage.setItem("htss_live_semitones", String(liveSemitones)); }, [liveSemitones]);
+
+  // When the live pitch changes while active, update the running shifter.
+  useEffect(() => {
+    if (liveActive && liveJungleRef.current) {
+      liveJungleRef.current.setPitchOffset(semitonesToMult(liveSemitones));
+    }
+  }, [liveSemitones, liveActive]);
+
+  // Load saved soundboard clips
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("htss_sound_clips");
+      if (saved) setSoundClips(JSON.parse(saved));
+    } catch { /* ignore */ }
+  }, []);
+
+  const persistClips = (clips: SoundClip[]) => {
+    setSoundClips(clips);
+    try { localStorage.setItem("htss_sound_clips", JSON.stringify(clips)); } catch { /* ignore */ }
+  };
+
+  // ── Live mic voice changer ──────────────────────────────────────────────
+  const stopLiveVoiceChanger = async () => {
+    if (liveJungleRef.current) {
+      try { liveJungleRef.current.dispose(); } catch { /* ignore */ }
+      liveJungleRef.current = null;
+    }
+    if (liveStreamRef.current) {
+      try { liveStreamRef.current.getTracks().forEach(t => t.stop()); } catch { /* ignore */ }
+      liveStreamRef.current = null;
+    }
+    if (liveCtxRef.current) {
+      try { await liveCtxRef.current.close(); } catch { /* ignore */ }
+      liveCtxRef.current = null;
+    }
+    setLiveActive(false);
+    setLiveStatus("");
+  };
+
+  const startLiveVoiceChanger = async () => {
+    // Determine destination device: prefer virtual mic, else monitor.
+    const sinkId =
+      (enableVirtualMic && selectedVirtualMicId) ? selectedVirtualMicId :
+      (enableMonitor && selectedMonitorId) ? selectedMonitorId : "";
+
+    try {
+      setLiveStatus("Đang khởi tạo...");
+      // 1. Capture mic input
+      const constraints: MediaStreamConstraints = {
+        audio: selectedMicInputId && selectedMicInputId !== "default"
+          ? { deviceId: { exact: selectedMicInputId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+          : { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      liveStreamRef.current = stream;
+
+      // 2. Create routed AudioContext
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      let ctx: AudioContext;
+      if (sinkId && sinkId !== "default") {
+        try {
+          ctx = new AudioCtx({ sinkId } as any);
+        } catch {
+          ctx = new AudioCtx();
+          if ((ctx as any).setSinkId) { try { await (ctx as any).setSinkId(sinkId); } catch { /* ignore */ } }
+        }
+      } else {
+        ctx = new AudioCtx();
+      }
+      liveCtxRef.current = ctx;
+      if (ctx.state === "suspended") { try { await ctx.resume(); } catch { /* ignore */ } }
+
+      // 3. Build the pitch-shift graph: mic → jungle → gain → destination
+      const source = ctx.createMediaStreamSource(stream);
+      const jungle = new Jungle(ctx);
+      jungle.setPitchOffset(semitonesToMult(liveSemitones));
+      liveJungleRef.current = jungle;
+
+      const outGain = ctx.createGain();
+      outGain.gain.value = volume;
+
+      source.connect(jungle.input);
+      jungle.output.connect(outGain);
+      outGain.connect(ctx.destination);
+
+      setLiveActive(true);
+      const where = (enableVirtualMic && selectedVirtualMicId) ? "Mic ảo (Discord/Game)"
+        : (enableMonitor && selectedMonitorId) ? "loa/tai nghe" : "thiết bị mặc định";
+      setLiveStatus(`Đang đổi giọng trực tiếp → ${where}`);
+    } catch (err: any) {
+      console.error("Live voice changer error:", err);
+      triggerNotification("Không thể bật đổi giọng real-time: " + (err?.message || err));
+      await stopLiveVoiceChanger();
+    }
+  };
+
+  const toggleLiveVoiceChanger = () => {
+    if (liveActive) stopLiveVoiceChanger();
+    else startLiveVoiceChanger();
+  };
+
+  // Cleanup live changer on unmount
+  useEffect(() => {
+    return () => { stopLiveVoiceChanger(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── MP3 Soundboard ──────────────────────────────────────────────────────
+  const handleAddSoundClips = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const newClips: SoundClip[] = [];
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith("audio/") && !/\.(mp3|wav|ogg|m4a|webm)$/i.test(file.name)) continue;
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        newClips.push({
+          id: "clip_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+          name: file.name.replace(/\.[^.]+$/, ""),
+          dataUrl,
+        });
+      } catch (e) {
+        console.error("Lỗi đọc file âm thanh:", e);
+      }
+    }
+    if (newClips.length) {
+      persistClips([...soundClips, ...newClips]);
+      triggerNotification(`Đã thêm ${newClips.length} âm thanh vào Soundboard!`);
+    }
+  };
+
+  const handleDeleteClip = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    persistClips(soundClips.filter(c => c.id !== id));
+  };
+
+  const handleStopClip = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    stopAllAudio();
+    setPlayingClipId(null);
+  };
+
+  const handlePlayClip = async (clip: SoundClip) => {
+    // Toggle: nếu clip này đang phát thì bấm lại để dừng
+    if (playingClipId === clip.id) {
+      handleStopClip();
+      return;
+    }
+    stopAllAudio();
+    setPlayingClipId(clip.id);
+    try {
+      const playPromises: Promise<any>[] = [];
+      if (enableMonitor && selectedMonitorId) playPromises.push(playToDevice(clip.dataUrl, selectedMonitorId, volume));
+      if (enableVirtualMic && selectedVirtualMicId) playPromises.push(playToDevice(clip.dataUrl, selectedVirtualMicId, volume));
+      if (playPromises.length === 0) playPromises.push(playToDevice(clip.dataUrl, "", volume));
+      await Promise.all(playPromises);
+    } catch (err: any) {
+      console.error("Soundboard playback failed:", err);
+      triggerNotification("Lỗi phát âm thanh: " + (err?.message || err));
+    } finally {
+      setPlayingClipId((cur) => (cur === clip.id ? null : cur));
+    }
+  };
+
+  const handleInstallVirtualMic = async () => {    if (isInstallingMic) return;
     setIsInstallingMic(true);
     setInstallMicStatus("Đang tải xuống bộ cài đặt driver Mic ảo...");
     try {
@@ -388,7 +617,7 @@ export default function TranslationHub({ reloadKey }: { reloadKey?: number }) {
       micStreamRef.current = null;
     }
 
-    if (!enableMicLoopback || !enableVirtualMic || !selectedVirtualMicId) {
+    if (!enableMicLoopback || !enableVirtualMic || !selectedVirtualMicId || liveActive) {
       return;
     }
 
@@ -440,7 +669,7 @@ export default function TranslationHub({ reloadKey }: { reloadKey?: number }) {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enableMicLoopback, selectedMicInputId, selectedVirtualMicId, enableVirtualMic]);
+  }, [enableMicLoopback, selectedMicInputId, selectedVirtualMicId, enableVirtualMic, liveActive]);
 
   // Load Presets and Enumerate Devices
   useEffect(() => {
@@ -587,7 +816,15 @@ export default function TranslationHub({ reloadKey }: { reloadKey?: number }) {
 
     try {
       let langParam = finalSelectionLang;
-      if (finalSelectionLang === "vi") {
+      let pitchParam = 0;
+      let rateParam = 0;
+
+      if (useVoiceChanger && selectedVoice) {
+        // Voice changer: use the chosen neural voice with server-side pitch/rate.
+        langParam = selectedVoice;
+        pitchParam = voicePitch;
+        rateParam = voiceRate;
+      } else if (finalSelectionLang === "vi") {
         if (voiceTone === "edge_female") {
           langParam = "edge-HoaiMyNeural";
         } else if (voiceTone === "edge_male") {
@@ -604,7 +841,9 @@ export default function TranslationHub({ reloadKey }: { reloadKey?: number }) {
       // Gọi backend để lấy audio dạng Base64 nhằm tránh CORS và các hạn chế của WebView
       const audioUrl = await invoke<string>("get_tts_audio", { 
         text: finalSelectionText, 
-        lang: langParam 
+        lang: langParam,
+        pitch: pitchParam,
+        rate: rateParam
       });
       
       const playPromises: Promise<any>[] = [];
@@ -1064,6 +1303,275 @@ export default function TranslationHub({ reloadKey }: { reloadKey?: number }) {
               </div>
             </div>
           </div>
+
+        {/* Voice Changer Panel */}
+        <div className="bg-[#0c0c12]/60 border border-white/5 rounded-3xl p-6 shadow-2xl">
+          <div className="flex items-center justify-between gap-4 mb-1 flex-wrap">
+            <h3 className="text-lg font-black text-white flex items-center gap-2">
+              <Mic className="w-5 h-5 text-fuchsia-400" /> Đổi Giọng Nói (Voice Changer)
+            </h3>
+            {/* Enable toggle */}
+            <button
+              type="button"
+              onClick={() => setUseVoiceChanger(v => !v)}
+              role="switch"
+              aria-checked={useVoiceChanger}
+              className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors duration-200 cursor-pointer flex-shrink-0 ${useVoiceChanger ? "bg-fuchsia-500 shadow-[0_0_12px_rgba(217,70,239,0.4)]" : "bg-white/10"}`}
+            >
+              <span
+                className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ${useVoiceChanger ? "translate-x-[22px]" : "translate-x-0.5"}`}
+              />
+            </button>
+          </div>
+          <p className="text-[11px] text-neutral-500 mb-5">
+            Chọn nhiều loại giọng nói (nam/nữ, nhiều ngôn ngữ) và tinh chỉnh cao độ / tốc độ. Khi bật, mọi lượt phát sẽ dùng giọng này.
+          </p>
+
+          <div className={`transition-opacity duration-300 ${useVoiceChanger ? "opacity-100" : "opacity-40 pointer-events-none"}`}>
+            {/* Voice grid */}
+            <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-2">Chọn giọng</div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 max-h-[220px] overflow-y-auto custom-scrollbar pr-1">
+              {voiceList.map((voice) => {
+                const isSel = selectedVoice === voice.id;
+                return (
+                  <button
+                    key={voice.id}
+                    onClick={() => setSelectedVoice(voice.id)}
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-left transition-all cursor-pointer select-none
+                      ${isSel
+                        ? "bg-fuchsia-500/15 border-fuchsia-500/40 shadow-[0_0_12px_rgba(217,70,239,0.15)]"
+                        : "bg-white/[0.02] border-white/5 hover:bg-white/[0.06] hover:border-white/10"}`}
+                  >
+                    <span className="text-base leading-none">{voice.flag}</span>
+                    <span className="min-w-0 flex flex-col">
+                      <span className={`text-[11px] font-black truncate ${isSel ? "text-fuchsia-200" : "text-neutral-200"}`}>{voice.label}</span>
+                      <span className="text-[9px] text-neutral-500 font-bold uppercase tracking-wide">{voice.locale}</span>
+                    </span>
+                    {isSel && <Check className="w-3.5 h-3.5 text-fuchsia-400 ml-auto shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Pitch & Rate sliders */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mt-5">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Cao độ (Pitch)</span>
+                  <span className="text-[11px] font-black text-fuchsia-300">{voicePitch > 0 ? `+${voicePitch}` : voicePitch} Hz</span>
+                </div>
+                <input
+                  type="range" min={-50} max={50} step={1}
+                  value={voicePitch}
+                  onChange={(e) => setVoicePitch(parseInt(e.target.value, 10))}
+                  className="w-full accent-fuchsia-500 cursor-pointer"
+                />
+                <div className="flex justify-between text-[9px] text-neutral-600 font-bold mt-1">
+                  <span>Trầm</span><span>Gốc</span><span>Cao</span>
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Tốc độ (Rate)</span>
+                  <span className="text-[11px] font-black text-fuchsia-300">{voiceRate > 0 ? `+${voiceRate}` : voiceRate}%</span>
+                </div>
+                <input
+                  type="range" min={-50} max={50} step={1}
+                  value={voiceRate}
+                  onChange={(e) => setVoiceRate(parseInt(e.target.value, 10))}
+                  className="w-full accent-fuchsia-500 cursor-pointer"
+                />
+                <div className="flex justify-between text-[9px] text-neutral-600 font-bold mt-1">
+                  <span>Chậm</span><span>Gốc</span><span>Nhanh</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick presets + test */}
+            <div className="flex items-center gap-2 mt-5 flex-wrap">
+              {[
+                { label: "Gốc", p: 0, r: 0 },
+                { label: "Nam trầm", p: -25, r: -5 },
+                { label: "Nữ cao", p: 30, r: 5 },
+                { label: "Con nít", p: 45, r: 8 },
+                { label: "Khổng lồ", p: -45, r: -12 },
+              ].map((pre) => (
+                <button
+                  key={pre.label}
+                  onClick={() => { setVoicePitch(pre.p); setVoiceRate(pre.r); }}
+                  className="px-3 py-1.5 rounded-lg text-[10px] font-black bg-white/[0.03] border border-white/5 text-neutral-300 hover:text-white hover:bg-white/[0.08] transition-all cursor-pointer"
+                >
+                  {pre.label}
+                </button>
+              ))}
+              <button
+                onClick={() => {
+                  const sample = (playTarget === "original" ? inputText : translatedText).trim() || "Xin chào, đây là giọng nói thử nghiệm.";
+                  handlePlayVoice(sample, selectedVoice);
+                }}
+                className="ml-auto flex items-center gap-2 px-4 py-2 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-[11px] font-black uppercase tracking-wider transition-all cursor-pointer hover:shadow-[0_0_15px_rgba(217,70,239,0.3)]"
+              >
+                <Play className="w-3.5 h-3.5" /> Nghe thử
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Live Mic Voice Changer + MP3 Soundboard */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Real-time mic voice changer */}
+          <div className="bg-[#0c0c12]/60 border border-white/5 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+            <div className={`absolute top-[-10%] right-[-10%] w-[40%] h-[40%] blur-[55px] rounded-full pointer-events-none transition-colors ${liveActive ? "bg-rose-600/20" : "bg-rose-600/5"}`} />
+            <div className="flex items-center justify-between gap-3 mb-1 relative z-10 flex-wrap">
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
+                <Radio className={`w-5 h-5 ${liveActive ? "text-rose-400 animate-pulse" : "text-rose-400/70"}`} /> Đổi Giọng Real-time
+              </h3>
+              {liveActive && (
+                <span className="flex items-center gap-1.5 text-[10px] font-black text-rose-300 bg-rose-500/15 border border-rose-500/30 px-2.5 py-1 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" /> ĐANG CHẠY
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-neutral-500 mb-5 relative z-10">
+              Biến đổi giọng nói từ Mic của bạn ngay lập tức và đẩy vào Discord/Game (bật "Inject vào Mic ảo" ở bên dưới).
+            </p>
+
+            {/* Pitch slider */}
+            <div className="relative z-10">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Cao độ giọng</span>
+                <span className="text-[11px] font-black text-rose-300">{liveSemitones > 0 ? `+${liveSemitones}` : liveSemitones} nửa cung</span>
+              </div>
+              <input
+                type="range" min={-12} max={12} step={1}
+                value={liveSemitones}
+                onChange={(e) => setLiveSemitones(parseInt(e.target.value, 10))}
+                className="w-full accent-rose-500 cursor-pointer"
+              />
+              <div className="flex justify-between text-[9px] text-neutral-600 font-bold mt-1">
+                <span>Trầm (Khổng lồ)</span><span>Gốc</span><span>Cao (Con nít)</span>
+              </div>
+            </div>
+
+            {/* Quick presets */}
+            <div className="flex items-center gap-2 mt-4 flex-wrap relative z-10">
+              {[
+                { label: "Nam trầm", s: -5 },
+                { label: "Khổng lồ", s: -10 },
+                { label: "Nữ cao", s: 5 },
+                { label: "Con nít", s: 9 },
+                { label: "Gốc", s: 0 },
+              ].map((pre) => (
+                <button
+                  key={pre.label}
+                  onClick={() => setLiveSemitones(pre.s)}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black border transition-all cursor-pointer
+                    ${liveSemitones === pre.s ? "bg-rose-500/20 border-rose-500/40 text-rose-200" : "bg-white/[0.03] border-white/5 text-neutral-300 hover:text-white hover:bg-white/[0.08]"}`}
+                >
+                  {pre.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Start/stop */}
+            <button
+              onClick={toggleLiveVoiceChanger}
+              className={`w-full mt-5 flex items-center justify-center gap-2 py-3 rounded-2xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer relative z-10
+                ${liveActive
+                  ? "bg-rose-600 text-white hover:bg-rose-500 hover:shadow-[0_0_18px_rgba(244,63,94,0.35)]"
+                  : "bg-gradient-to-r from-rose-500 to-fuchsia-600 text-white hover:shadow-[0_0_18px_rgba(217,70,239,0.35)]"}`}
+            >
+              {liveActive ? (<><MicOff className="w-4 h-4" /> Tắt đổi giọng</>) : (<><Wand2 className="w-4 h-4" /> Bật đổi giọng từ Mic</>)}
+            </button>
+            {liveStatus && (
+              <p className="text-[10px] text-rose-300/80 font-bold mt-2.5 text-center relative z-10">{liveStatus}</p>
+            )}
+            {!enableVirtualMic && (
+              <p className="text-[10px] text-amber-400/80 font-semibold mt-2 text-center relative z-10 flex items-center justify-center gap-1.5">
+                <ShieldAlert className="w-3 h-3" /> Bật "Inject vào Mic ảo" bên dưới để người khác nghe được.
+              </p>
+            )}
+          </div>
+
+          {/* MP3 Soundboard */}
+          <div className="bg-[#0c0c12]/60 border border-white/5 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-[-10%] right-[-10%] w-[40%] h-[40%] bg-emerald-600/8 blur-[55px] rounded-full pointer-events-none" />
+            <div className="flex items-center justify-between gap-3 mb-1 relative z-10 flex-wrap">
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
+                <Music className="w-5 h-5 text-emerald-400" /> Soundboard MP3
+              </h3>
+              <div className="flex items-center gap-2">
+                {playingClipId && (
+                  <button
+                    onClick={handleStopClip}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-[10px] font-black uppercase tracking-wider hover:bg-red-500/25 transition-all cursor-pointer"
+                  >
+                    <Square className="w-3 h-3 fill-current" /> Dừng
+                  </button>
+                )}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-black uppercase tracking-wider hover:bg-emerald-500/25 transition-all cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5" /> Thêm MP3
+                </button>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="audio/*,.mp3,.wav,.ogg,.m4a"
+                multiple
+                className="hidden"
+                onChange={(e) => { handleAddSoundClips(e.target.files); e.target.value = ""; }}
+              />
+            </div>
+            <p className="text-[11px] text-neutral-500 mb-4 relative z-10">
+              Tải file MP3 lên và phát ngay vào Mic ảo / loa. Hoàn hảo cho meme, hiệu ứng âm thanh trong game.
+            </p>
+
+            <div className="relative z-10">
+              {soundClips.length === 0 ? (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-2 border-dashed border-white/10 hover:border-emerald-500/40 rounded-2xl py-10 text-center cursor-pointer transition-colors group"
+                >
+                  <Music className="w-8 h-8 text-neutral-600 group-hover:text-emerald-400 mx-auto mb-2 transition-colors" />
+                  <p className="text-xs text-neutral-500 font-semibold">Bấm để thêm file âm thanh (MP3, WAV...)</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-[240px] overflow-y-auto custom-scrollbar pr-1">
+                  {soundClips.map((clip) => {
+                    const isPlaying = playingClipId === clip.id;
+                    return (
+                      <div
+                        key={clip.id}
+                        onClick={() => handlePlayClip(clip)}
+                        className={`group relative flex flex-col items-center justify-center gap-2 p-3 rounded-2xl border cursor-pointer transition-all select-none aspect-square
+                          ${isPlaying ? "bg-emerald-500/20 border-emerald-500/50 shadow-[0_0_14px_rgba(16,185,129,0.2)]" : "bg-white/[0.02] border-white/5 hover:bg-white/[0.06] hover:border-emerald-500/30"}`}
+                      >
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${isPlaying ? "bg-emerald-500 text-black" : "bg-emerald-500/10 text-emerald-400 group-hover:scale-110"}`}>
+                          {isPlaying
+                            ? (<><Volume2 className="w-5 h-5 animate-pulse group-hover:hidden" /><Square className="w-4 h-4 fill-current hidden group-hover:block" /></>)
+                            : <Play className="w-5 h-5" />}
+                        </div>
+                        <span className="text-[10px] font-black text-neutral-300 text-center line-clamp-2 leading-tight">{clip.name}</span>
+                        {isPlaying && (
+                          <span className="absolute bottom-1.5 left-1.5 text-[8px] font-black uppercase text-emerald-300/80 tracking-wider">Bấm để dừng</span>
+                        )}
+                        <button
+                          onClick={(e) => handleDeleteClip(clip.id, e)}
+                          className="absolute top-1.5 right-1.5 p-1 rounded-lg text-neutral-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* Bottom Section: Presets & Audio Router Panel */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">

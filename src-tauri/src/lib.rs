@@ -66,6 +66,10 @@ pub struct SavedRiotAccount {
     pub entitlement_token: String,
     pub last_updated: u64,
     pub login_type: String, // "riot_client" hoặc "credentials"
+    // Reauth cookies (ssid, ...) cho phép tự động gia hạn token khi hết hạn,
+    // không cần đăng nhập lại. Mặc định None để tương thích file cũ.
+    #[serde(default)]
+    pub reauth_cookies: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -73,58 +77,95 @@ pub struct ActiveAccountConfig {
     pub puuid: Option<String>,
 }
 
-async fn riot_login(username: &str, password: &str) -> Result<(String, String, String), String> {
+async fn riot_login(username: &str, password: &str) -> Result<(String, String, String, String), String> {
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
+        .cookie_store(true)
         .build()
         .map_err(|e| e.to_string())?;
 
-    // Step 1: Khởi tạo session để lấy Cookies
+    // Step 1: Khởi tạo session để lấy Cookies.
+    //
+    // Dùng luồng OAuth của Riot Client desktop (`client_id = riot-client`).
+    // Luồng web `play-valorant-web-prod` hiện đã chặn đăng nhập bằng
+    // username/password trực tiếp (yêu cầu hCaptcha) nên luôn trả về
+    // `auth_failure` dù mật khẩu đúng. Luồng riot-client vẫn nhận trực tiếp.
     let init_url = "https://auth.riotgames.com/api/v1/authorization";
     let init_body = serde_json::json!({
-        "client_id": "play-valorant-web-prod",
-        "nonce": "1",
-        "redirect_uri": "https://playvalorant.com/opt_in",
+        "acr_values": "",
+        "claims": "",
+        "client_id": "riot-client",
+        "code_challenge": "",
+        "code_challenge_method": "",
+        "nonce": uuid::Uuid::new_v4().simple().to_string(),
+        "redirect_uri": "http://localhost/redirect",
         "response_type": "token id_token",
-        "scope": "openid acls email link"
+        "scope": "openid link ban lol_region account"
     });
 
     let init_resp = client.post(init_url)
         .header("Content-Type", "application/json")
-        .header("User-Agent", "ShooterGame/11 Windows/10.0.19042.1.256.64bit")
+        .header("User-Agent", "RiotClient/63.0.9.4909983.4789131 rso-auth (Windows;10;;Professional, x64)")
+        .header("Accept", "application/json")
         .json(&init_body)
         .send()
         .await
         .map_err(|e| format!("Lỗi kết nối Riot Auth (Khởi tạo): {}", e))?;
 
-    // Trích xuất cookie từ Set-Cookie
-    let mut cookies = Vec::new();
+    // Thu thập cookie từ bước khởi tạo (asid, ...). reqwest cũng tự lưu vào
+    // cookie store và gửi lại ở request tiếp theo, nhưng ta vẫn gom thủ công
+    // để dành cho việc gia hạn token (reauth) sau này.
+    let mut session_cookies: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for cookie in init_resp.headers().get_all("set-cookie") {
         if let Ok(cookie_str) = cookie.to_str() {
-            if let Some(cookie_val) = cookie_str.split(';').next() {
-                cookies.push(cookie_val.to_string());
+            if let Some(first) = cookie_str.split(';').next() {
+                if let Some((k, v)) = first.split_once('=') {
+                    session_cookies.insert(k.trim().to_string(), v.trim().to_string());
+                }
             }
         }
     }
-    
-    let cookie_header = cookies.join("; ");
 
     // Step 2: Gửi tài khoản và mật khẩu
     let auth_body = serde_json::json!({
         "type": "auth",
         "username": username,
         "password": password,
-        "remember": true
+        "remember": true,
+        "language": "en_US"
     });
+
+    // Riot yêu cầu header `Referer` trỏ tới một subdomain ngẫu nhiên của
+    // riotgames.com cho request đăng nhập, nếu không sẽ bị chặn (luôn trả về
+    // auth_failure). Tham khảo: floxay/python-riot-auth.
+    let referer = format!("https://{}.riotgames.com/", uuid::Uuid::new_v4().simple());
 
     let auth_resp = client.put(init_url)
         .header("Content-Type", "application/json")
-        .header("User-Agent", "ShooterGame/11 Windows/10.0.19042.1.256.64bit")
-        .header("Cookie", &cookie_header)
+        .header("User-Agent", "RiotClient/63.0.9.4909983.4789131 rso-auth (Windows;10;;Professional, x64)")
+        .header("Accept", "application/json")
+        .header("Referer", &referer)
         .json(&auth_body)
         .send()
         .await
         .map_err(|e| format!("Lỗi kết nối Riot Auth (Đăng nhập): {}", e))?;
+
+    // Bổ sung cookie phiên (ssid, clid, tdid, ...) trả về sau khi đăng nhập để
+    // dùng cho việc gia hạn token sau này mà không cần nhập lại mật khẩu.
+    for cookie in auth_resp.headers().get_all("set-cookie") {
+        if let Ok(cookie_str) = cookie.to_str() {
+            if let Some(first) = cookie_str.split(';').next() {
+                if let Some((k, v)) = first.split_once('=') {
+                    session_cookies.insert(k.trim().to_string(), v.trim().to_string());
+                }
+            }
+        }
+    }
+    let reauth_cookies = session_cookies
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join("; ");
 
     let auth_json: serde_json::Value = auth_resp.json().await
         .map_err(|e| format!("Lỗi đọc phản hồi đăng nhập: {}", e))?;
@@ -208,7 +249,93 @@ async fn riot_login(username: &str, password: &str) -> Result<(String, String, S
         .ok_or_else(|| "Không tìm thấy PUUID trong UserInfo".to_string())?
         .to_string();
 
-    Ok((access_token, entitlement_token, puuid))
+    Ok((access_token, entitlement_token, puuid, reauth_cookies))
+}
+
+/// Gia hạn token bằng reauth cookie (ssid). Đây là cách Riot Client tự làm mới
+/// phiên: gọi authorization endpoint với cookie phiên đã lưu để lấy access_token
+/// mới mà không cần mật khẩu. Trả về (access_token, entitlement_token, cookies_mới).
+async fn riot_reauth_with_cookies(cookies: &str) -> Result<(String, String, String), String> {
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // GET authorization với prompt=none + cookie phiên → redirect chứa token.
+    // Dùng client web `play-valorant-web-prod` để khớp với phiên đăng nhập tạo
+    // qua trình duyệt; cookie `ssid` là phiên SSO dùng chung nên vẫn gia hạn
+    // được cho cả tài khoản lưu từ luồng khác.
+    let reauth_url = "https://auth.riotgames.com/authorize?redirect_uri=https%3A%2F%2Fplayvalorant.com%2Fopt_in&client_id=play-valorant-web-prod&response_type=token%20id_token&nonce=1&scope=account%20openid";
+
+    let resp = client.get(reauth_url)
+        .header("User-Agent", "ShooterGame/11 Windows/10.0.19042.1.256.64bit")
+        .header("Cookie", cookies)
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi gia hạn phiên: {}", e))?;
+
+    // Cập nhật cookie phiên nếu Riot trả về cookie mới (xoay vòng ssid).
+    let mut merged: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for c in cookies.split(';') {
+        if let Some((k, v)) = c.split_once('=') {
+            merged.insert(k.trim().to_string(), v.trim().to_string());
+        }
+    }
+    for cookie in resp.headers().get_all("set-cookie") {
+        if let Ok(cookie_str) = cookie.to_str() {
+            if let Some(first) = cookie_str.split(';').next() {
+                if let Some((k, v)) = first.split_once('=') {
+                    merged.insert(k.trim().to_string(), v.trim().to_string());
+                }
+            }
+        }
+    }
+    let new_cookies = merged
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    // Token nằm trong fragment của Location header.
+    let location = resp.headers().get("location")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| "REAUTH_EXPIRED".to_string())?
+        .to_string();
+
+    let parsed = Url::parse(&location).map_err(|e| format!("Lỗi parse redirect gia hạn: {}", e))?;
+    let fragment = parsed.fragment().ok_or_else(|| "REAUTH_EXPIRED".to_string())?;
+
+    let mut access_token = String::new();
+    for pair in fragment.split('&') {
+        let mut parts = pair.splitn(2, '=');
+        if let (Some(key), Some(val)) = (parts.next(), parts.next()) {
+            if key == "access_token" {
+                access_token = val.to_string();
+                break;
+            }
+        }
+    }
+    if access_token.is_empty() {
+        return Err("REAUTH_EXPIRED".to_string());
+    }
+
+    // Lấy lại entitlement token mới.
+    let ent_resp = client.post("https://entitlements.auth.riotgames.com/api/v1/entitlements/token")
+        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "ShooterGame/11 Windows/10.0.19042.1.256.64bit")
+        .body("{}")
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi lấy Entitlement khi gia hạn: {}", e))?;
+    let ent_json: serde_json::Value = ent_resp.json().await
+        .map_err(|e| format!("Lỗi đọc Entitlement JSON khi gia hạn: {}", e))?;
+    let entitlement_token = ent_json["entitlements_token"].as_str()
+        .ok_or_else(|| "Không lấy được entitlements_token khi gia hạn".to_string())?
+        .to_string();
+
+    Ok((access_token, entitlement_token, new_cookies))
 }
 
 async fn fetch_game_name(shard: &str, puuid: &str, auth_token: &str, entitlement_token: &str) -> Result<String, String> {
@@ -344,7 +471,7 @@ async fn get_riot_credentials() -> Result<RiotCredentials, String> {
 #[tauri::command]
 async fn add_valorant_account_credentials(username: String, password: String, shard: String) -> Result<SavedRiotAccount, String> {
     // 1. Đăng nhập qua Riot API
-    let (auth_token, entitlement_token, puuid) = riot_login(&username, &password).await?;
+    let (auth_token, entitlement_token, puuid, reauth_cookies) = riot_login(&username, &password).await?;
     
     // 2. Lấy thông tin GameName#Tag
     let game_name = fetch_game_name(&shard, &puuid, &auth_token, &entitlement_token).await
@@ -365,6 +492,7 @@ async fn add_valorant_account_credentials(username: String, password: String, sh
         entitlement_token,
         last_updated: now,
         login_type: "credentials".to_string(),
+        reauth_cookies: if reauth_cookies.is_empty() { None } else { Some(reauth_cookies) },
     };
     
     // 3. Lưu danh sách accounts
@@ -399,6 +527,842 @@ async fn add_valorant_account_credentials(username: String, password: String, sh
     }
     
     Ok(account)
+}
+
+/// Thử lấy GameName#Tag bằng shard ưu tiên trước, nếu thất bại thì dò qua các
+/// shard còn lại (tài khoản có thể ở khu vực khác với lựa chọn của người dùng).
+/// Trả về (game_name, shard_thực_tế).
+async fn fetch_game_name_smart(preferred: &str, puuid: &str, auth: &str, ent: &str) -> (String, String) {
+    let mut shards = vec![preferred.to_string()];
+    for s in ["ap", "na", "eu", "kr"] {
+        if s != preferred {
+            shards.push(s.to_string());
+        }
+    }
+    for s in &shards {
+        if let Ok(name) = fetch_game_name(s, puuid, auth, ent).await {
+            return (name, s.clone());
+        }
+    }
+    let short = &puuid[..puuid.len().min(5)];
+    (format!("RiotAccount#{}", short), preferred.to_string())
+}
+
+/// Hoàn tất đăng nhập từ một access_token đã có sẵn (ví dụ lấy qua trình duyệt):
+/// lấy entitlement token + puuid + tên game rồi lưu tài khoản vào file.
+///
+/// `riot_cookies` là cookie SSO bắt được; nếu có `ssid` ta dựng file session để
+/// đăng nhập được vào Riot Client (login_type = "riot_client").
+async fn finalize_and_save_riot_login(
+    access_token: String,
+    reauth_cookies: String,
+    riot_cookies: Vec<RiotCookie>,
+    shard_hint: String,
+) -> Result<SavedRiotAccount, String> {
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // ── PUUID: lấy từ access_token (JWT "sub") hoặc cookie "sub"/"ssid" trước,
+    //    không phụ thuộc mạng. Chỉ gọi /userinfo khi tất cả thất bại. ──
+    let puuid = jwt_extract_str(&access_token, "sub")
+        .or_else(|| {
+            riot_cookies
+                .iter()
+                .find(|c| c.name == "sub" && !c.value.is_empty())
+                .map(|c| c.value.clone())
+        })
+        .or_else(|| {
+            // ssid là JWT, payload chứa "sub" = PUUID.
+            riot_cookies
+                .iter()
+                .find(|c| c.name == "ssid")
+                .and_then(|c| jwt_extract_str(&c.value, "sub"))
+        });
+
+    let puuid = match puuid {
+        Some(p) => p,
+        None => {
+            // Fallback cuối: gọi userinfo.
+            let userinfo_resp = client
+                .get("https://auth.riotgames.com/userinfo")
+                .header("Authorization", format!("Bearer {}", access_token))
+                .header("User-Agent", "ShooterGame/11 Windows/10.0.19042.1.256.64bit")
+                .send()
+                .await
+                .map_err(|e| format!("Lỗi lấy UserInfo: {}", e))?;
+            let userinfo_json: serde_json::Value = userinfo_resp
+                .json()
+                .await
+                .map_err(|e| format!("Lỗi đọc UserInfo JSON: {}", e))?;
+            userinfo_json["sub"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| "Không xác định được PUUID của tài khoản.".to_string())?
+        }
+    };
+
+    // ── Entitlement token: best-effort (thử cả 2 endpoint). KHÔNG chặn việc lưu
+    //    tài khoản / đăng nhập Riot Client nếu thất bại — vì Client chỉ cần ssid. ──
+    let mut entitlement_token = String::new();
+    for url in [
+        "https://entitlements.auth.riotgames.com/api/token/v1",
+        "https://entitlements.auth.riotgames.com/api/v1/entitlements/token",
+    ] {
+        let resp = match client
+            .post(url)
+            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .header("User-Agent", "ShooterGame/11 Windows/10.0.19042.1.256.64bit")
+            .body("{}")
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let body = resp.text().await.unwrap_or_default();
+        let json: serde_json::Value =
+            serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+        if let Some(t) = json["entitlements_token"].as_str() {
+            entitlement_token = t.to_string();
+            break;
+        }
+    }
+
+    // ── Tên game + shard: best-effort. Nếu không lấy được (vd thiếu entitlement)
+    //    thì dùng tên tạm; người dùng vẫn đăng nhập Client được. ──
+    let (game_name, shard) = if entitlement_token.is_empty() {
+        let short = &puuid[..puuid.len().min(5)];
+        (format!("Riot Account #{}", short), shard_hint.clone())
+    } else {
+        fetch_game_name_smart(&shard_hint, &puuid, &access_token, &entitlement_token).await
+    };
+
+    // Dựng file session để đăng nhập được vào Riot Client (nếu bắt được ssid).
+    // Nếu thành công, đánh dấu là "riot_client" để khi "Chọn sử dụng" sẽ khôi
+    // phục session và mở Riot Client; ngược lại chỉ dùng API ("credentials").
+    let region = jwt_extract_region(&access_token).unwrap_or_default();
+    let session_saved = save_browser_session_yaml(&puuid, &region, &riot_cookies);
+    let login_type = if session_saved { "riot_client" } else { "credentials" };
+
+    let account = SavedRiotAccount {
+        puuid: puuid.clone(),
+        game_name,
+        username: None,
+        password: None,
+        shard,
+        auth_token: access_token,
+        entitlement_token,
+        last_updated: now_secs(),
+        login_type: login_type.to_string(),
+        reauth_cookies: if reauth_cookies.is_empty() {
+            None
+        } else {
+            Some(reauth_cookies)
+        },
+    };
+
+    // Lưu vào danh sách + đặt active.
+    let mut accounts = read_accounts_raw();
+    if let Some(pos) = accounts.iter().position(|a| a.puuid == puuid) {
+        // Giữ lại username/password cũ nếu trước đó đã lưu bằng mật khẩu.
+        let prev = &accounts[pos];
+        let mut merged = account.clone();
+        if merged.username.is_none() {
+            merged.username = prev.username.clone();
+        }
+        if merged.password.is_none() {
+            merged.password = prev.password.clone();
+        }
+        accounts[pos] = merged;
+    } else {
+        accounts.push(account.clone());
+    }
+    write_accounts_raw(&accounts)?;
+
+    let app_data = std::env::var("APPDATA").map_err(|e| e.to_string())?;
+    let active_path = PathBuf::from(&app_data)
+        .join("htssclub")
+        .join("active_account.json");
+    let active_config = ActiveAccountConfig {
+        puuid: Some(puuid.clone()),
+    };
+    if let Ok(active_pretty) = serde_json::to_string_pretty(&active_config) {
+        let _ = fs::write(&active_path, active_pretty);
+    }
+
+    // Tự kích hoạt tài khoản vừa đăng nhập: khôi phục session vào Riot Client
+    // và mở Client để người dùng vào chơi ngay, không cần bấm "Chọn sử dụng".
+    if session_saved {
+        let puuid_for_activate = puuid.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = restore_riot_session(&puuid_for_activate);
+            let _ = open_riot_client();
+        });
+    }
+
+    Ok(account)
+}
+
+/// Lệnh: đăng nhập Riot bằng cách mở một cửa sổ trình duyệt thật.
+///
+/// Đây là cách đáng tin cậy nhất vì Riot hiện chặn đăng nhập username/password
+/// trực tiếp (hCaptcha) và hỗ trợ cả tài khoản bật 2FA. Người dùng đăng nhập
+/// trong cửa sổ, ta bắt redirect chứa access_token rồi lưu phiên (cookie ssid)
+/// để tự động gia hạn về sau.
+#[tauri::command]
+async fn add_valorant_account_browser(
+    app: tauri::AppHandle,
+    shard: String,
+) -> Result<SavedRiotAccount, String> {
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+    use tokio::sync::oneshot;
+
+    // Đóng cửa sổ đăng nhập cũ nếu còn mở.
+    if let Some(w) = app.get_webview_window("riot-login") {
+        let _ = w.close();
+    }
+
+    // Dùng một thư mục profile riêng cho cửa sổ đăng nhập và XÓA nó trước mỗi
+    // lần mở. Cách này cho phiên mới hoàn toàn (không "dính" tài khoản trước)
+    // mà vẫn đọc được cookie HttpOnly như ssid (chế độ incognito thì không đọc
+    // được cookie HttpOnly nên không lấy được ssid để đăng nhập Riot Client).
+    let login_profile_dir = {
+        let app_data = std::env::var("APPDATA").map_err(|e| e.to_string())?;
+        let dir = PathBuf::from(app_data).join("htssclub").join("riot_login_profile");
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    };
+
+    let auth_url = "https://auth.riotgames.com/authorize?redirect_uri=https%3A%2F%2Fplayvalorant.com%2Fopt_in&client_id=play-valorant-web-prod&response_type=token%20id_token&nonce=1&scope=account%20openid";
+
+    let (tx, rx) = oneshot::channel::<Option<String>>();
+    let tx = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+
+    // Theo dõi URL cuối cùng cửa sổ đi qua — dùng cho chẩn đoán khi không bắt
+    // được token (hiện ra thông báo lỗi trên UI để biết redirect đi đâu).
+    let last_url = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+
+    // Bắt redirect chứa token ngay trong quá trình điều hướng.
+    let tx_nav = tx.clone();
+    let last_url_nav = last_url.clone();
+    let window = WebviewWindowBuilder::new(
+        &app,
+        "riot-login",
+        WebviewUrl::External(
+            auth_url
+                .parse()
+                .map_err(|e| format!("URL đăng nhập không hợp lệ: {}", e))?,
+        ),
+    )
+    .title("Đăng nhập tài khoản Riot")
+    .inner_size(520.0, 760.0)
+    .data_directory(login_profile_dir)
+    .center()
+    .on_navigation(move |url| {
+        let full = url.as_str();
+        log::info!("[riot-login] navigate: {}", full);
+        if let Ok(mut g) = last_url_nav.lock() {
+            *g = full.to_string();
+        }
+
+        // Token có thể nằm ở fragment (#access_token=) hoặc query (?access_token=),
+        // tuỳ phản hồi của Riot. Quét toàn bộ URL để bắt cho chắc.
+        let extract = |s: &str| -> Option<String> {
+            for pair in s.split(['&', '#', '?']) {
+                let mut p = pair.splitn(2, '=');
+                if let (Some(k), Some(v)) = (p.next(), p.next()) {
+                    if k == "access_token" && !v.is_empty() {
+                        return Some(v.to_string());
+                    }
+                }
+            }
+            None
+        };
+
+        let token = url
+            .fragment()
+            .and_then(extract)
+            .or_else(|| url.query().and_then(extract))
+            .or_else(|| extract(full));
+
+        if let Some(t) = token {
+            log::info!("[riot-login] captured access_token (len {})", t.len());
+            if let Ok(mut guard) = tx_nav.lock() {
+                if let Some(sender) = guard.take() {
+                    let _ = sender.send(Some(t));
+                }
+            }
+            // Dừng điều hướng tới trang đích, ta đã có token.
+            return false;
+        }
+        true
+    })
+    .build()
+    .map_err(|e| format!("Không mở được cửa sổ đăng nhập: {}", e))?;
+
+    // Nếu người dùng tự đóng cửa sổ trước khi đăng nhập xong → huỷ.
+    let tx_close = tx.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed = event {
+            if let Ok(mut guard) = tx_close.lock() {
+                if let Some(sender) = guard.take() {
+                    let _ = sender.send(None);
+                }
+            }
+        }
+    });
+
+    // Chờ token (tối đa 5 phút). Song song, poll URL của cửa sổ vì `on_navigation`
+    // đôi khi không bắt được fragment (#access_token) khi redirect xử lý phía client.
+    let received = {
+        let app_poll = app.clone();
+        let tx_poll = tx.clone();
+        let last_url_poll = last_url.clone();
+        let poller = tokio::spawn(async move {
+            let extract = |s: &str| -> Option<String> {
+                for pair in s.split(['&', '#', '?']) {
+                    let mut p = pair.splitn(2, '=');
+                    if let (Some(k), Some(v)) = (p.next(), p.next()) {
+                        if k == "access_token" && !v.is_empty() {
+                            return Some(v.to_string());
+                        }
+                    }
+                }
+                None
+            };
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                let w = match app_poll.get_webview_window("riot-login") {
+                    Some(w) => w,
+                    None => break, // cửa sổ đã đóng
+                };
+                if let Ok(u) = w.url() {
+                    let s = u.as_str().to_string();
+                    if let Ok(mut g) = last_url_poll.lock() {
+                        *g = s.clone();
+                    }
+                    if let Some(t) = extract(&s) {
+                        log::info!("[riot-login] poll captured token (len {})", t.len());
+                        if let Ok(mut guard) = tx_poll.lock() {
+                            if let Some(sender) = guard.take() {
+                                let _ = sender.send(Some(t));
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+
+        let r = tokio::time::timeout(std::time::Duration::from_secs(300), rx).await;
+        poller.abort();
+        r
+    };
+
+    // Lấy cookie phiên (ssid, sub, csid, clid, tdid, ...) từ cửa sổ trước khi
+    // đóng — vừa để gia hạn token, vừa để dựng file session đăng nhập Riot Client.
+    // Chờ một nhịp để WebView2 ghi xong cookie (ssid được set ở bước /authorize).
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    let mut riot_cookies: Vec<RiotCookie> = Vec::new();
+    if let Some(w) = app.get_webview_window("riot-login") {
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut collect = |list: Vec<tauri::webview::Cookie<'static>>| {
+            for c in list {
+                let name = c.name().to_string();
+                if name.is_empty() || seen.contains(&name) {
+                    continue;
+                }
+                seen.insert(name.clone());
+                riot_cookies.push(RiotCookie {
+                    name,
+                    value: c.value().to_string(),
+                    domain: c.domain().unwrap_or("").to_string(),
+                    http_only: c.http_only().unwrap_or(true),
+                    secure: c.secure().unwrap_or(true),
+                    persistent: c.expires().is_some(),
+                });
+            }
+        };
+        if let Ok(auth_origin) = "https://auth.riotgames.com".parse::<Url>() {
+            if let Ok(cookies) = w.cookies_for_url(auth_origin) {
+                log::info!("[riot-login] cookies_for_url(auth) trả về {} cookie", cookies.len());
+                collect(cookies);
+            } else {
+                log::warn!("[riot-login] cookies_for_url(auth) lỗi");
+            }
+        }
+        if let Ok(all) = w.cookies() {
+            log::info!("[riot-login] cookies() trả về {} cookie", all.len());
+            collect(all);
+        } else {
+            log::warn!("[riot-login] cookies() lỗi");
+        }
+        log::info!(
+            "[riot-login] tổng cookie bắt được: [{}]",
+            riot_cookies.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
+        );
+        let _ = w.close();
+    }
+
+    let reauth_cookies = riot_cookies
+        .iter()
+        .map(|c| format!("{}={}", c.name, c.value))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    let last = last_url.lock().map(|g| g.clone()).unwrap_or_default();
+    let token = received
+        .map_err(|_| format!("Hết thời gian đăng nhập (quá 5 phút). URL cuối: {}", last))?
+        .map_err(|_| "Đăng nhập bị huỷ.".to_string())?
+        .ok_or_else(|| format!("Bạn đã đóng cửa sổ đăng nhập. URL cuối: {}", last))?;
+
+    finalize_and_save_riot_login(token, reauth_cookies, riot_cookies, shard).await
+}
+
+/// Một cookie phiên Riot kèm các thuộc tính cần để dựng lại file session.
+#[derive(Clone)]
+struct RiotCookie {
+    name: String,
+    value: String,
+    domain: String,
+    http_only: bool,
+    secure: bool,
+    persistent: bool,
+}
+
+/// Dựng nội dung file `RiotGamesPrivateSettings.yaml` từ danh sách cookie SSO
+/// bắt được qua trình duyệt. Riot Client đọc file này để tự đăng nhập: phần
+/// quan trọng nhất là cookie `ssid` (phiên SSO sống lâu) cùng `sub`, `csid`,
+/// `clid`, `tdid`. Định dạng khớp với file gốc của Riot Client.
+///
+/// Chỉ giữ đúng các cookie SSO của Riot, loại bỏ cookie rác (analytics,
+/// cloudflare, hcaptcha, ...) để khớp định dạng file gốc và tránh Client từ chối.
+fn build_riot_private_settings_yaml(puuid: &str, region: &str, cookies: &[RiotCookie]) -> String {
+    fn yaml_bool(b: bool) -> &'static str {
+        if b { "true" } else { "false" }
+    }
+
+    // Các cookie nằm trong session của riot-login (đúng theo file gốc của Riot).
+    const SESSION_NAMES: [&str; 6] = ["asid", "ccid", "clid", "sub", "csid", "ssid"];
+
+    // Gom cookie theo tên, ưu tiên domain auth.riotgames.com.
+    let find = |name: &str| -> Option<&RiotCookie> {
+        cookies
+            .iter()
+            .find(|c| c.name == name && c.domain.contains("auth.riotgames.com"))
+            .or_else(|| cookies.iter().find(|c| c.name == name))
+    };
+
+    let mut out = String::new();
+    out.push_str("riot-login:\n");
+    out.push_str("    persist:\n");
+    out.push_str(&format!("        region: \"{}\"\n", region));
+    out.push_str("        scopes:\n");
+    for s in ["account", "openid", "link", "ban", "lol_region", "lol", "summoner", "offline_access"] {
+        out.push_str(&format!("        - \"{}\"\n", s));
+    }
+    out.push_str("        session:\n");
+    out.push_str("            cookies:\n");
+    for name in SESSION_NAMES {
+        // Lấy cookie bắt được; riêng `sub` nếu thiếu thì dựng từ puuid,
+        // `ccid` phải là "riot-client" (trình duyệt trả về client_id của web).
+        let cookie = find(name);
+        let (value, http_only, secure, persistent) = match name {
+            "ccid" => ("riot-client".to_string(), true, true, true),
+            _ => match cookie {
+                Some(c) => (c.value.clone(), c.http_only, c.secure, c.persistent),
+                None if name == "sub" => (puuid.to_string(), true, true, true),
+                None => continue,
+            },
+        };
+        if value.is_empty() {
+            continue;
+        }
+        out.push_str("            -   domain: \"auth.riotgames.com\"\n");
+        out.push_str("                hostOnly: true\n");
+        out.push_str(&format!("                httpOnly: {}\n", yaml_bool(http_only)));
+        out.push_str(&format!("                name: \"{}\"\n", name));
+        out.push_str("                path: \"/\"\n");
+        out.push_str(&format!("                persistent: {}\n", yaml_bool(persistent)));
+        out.push_str(&format!("                secureOnly: {}\n", yaml_bool(secure)));
+        out.push_str(&format!("                value: \"{}\"\n", value));
+    }
+
+    if let Some(t) = find("tdid") {
+        out.push_str("rso-authenticator:\n");
+        out.push_str("    tdid:\n");
+        out.push_str("        domain: \"riotgames.com\"\n");
+        out.push_str("        expiryTime: 1811903735\n");
+        out.push_str("        hostOnly: false\n");
+        out.push_str(&format!("        httpOnly: {}\n", yaml_bool(t.http_only)));
+        out.push_str("        name: \"tdid\"\n");
+        out.push_str("        path: \"/\"\n");
+        out.push_str("        persistent: true\n");
+        out.push_str(&format!("        secureOnly: {}\n", yaml_bool(t.secure)));
+        out.push_str(&format!("        value: \"{}\"\n", t.value));
+    }
+
+    out
+}
+
+/// Lưu file session (yaml) cho một tài khoản đăng nhập qua trình duyệt để sau
+/// này khôi phục vào Riot Client. Trả về true nếu có cookie ssid hợp lệ.
+fn save_browser_session_yaml(puuid: &str, region: &str, cookies: &[RiotCookie]) -> bool {
+    let has_ssid = cookies.iter().any(|c| c.name == "ssid" && !c.value.is_empty());
+    if !has_ssid {
+        log::warn!("[riot-login] KHÔNG có cookie ssid → không tạo được session Riot Client");
+        return false;
+    }
+    let yaml = build_riot_private_settings_yaml(puuid, region, cookies);
+    let app_data = match std::env::var("APPDATA") {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let dir = PathBuf::from(app_data).join("htssclub").join("riot_sessions");
+    if !dir.exists() && fs::create_dir_all(&dir).is_err() {
+        return false;
+    }
+    let path = dir.join(format!("{}.yaml", puuid));
+    let ok = fs::write(&path, yaml).is_ok();
+    log::info!("[riot-login] lưu session yaml ({}): {}", if ok {"OK"} else {"LỖI"}, path.display());
+    ok
+}
+
+// ── Helpers chung cho việc đọc/ghi danh sách tài khoản ──────────────────────
+
+fn accounts_file_path() -> Result<PathBuf, String> {
+    let app_data = std::env::var("APPDATA").map_err(|e| e.to_string())?;
+    Ok(PathBuf::from(&app_data).join("htssclub").join("valorant_accounts.json"))
+}
+
+fn read_accounts_raw() -> Vec<SavedRiotAccount> {
+    accounts_file_path()
+        .ok()
+        .filter(|p| p.exists())
+        .and_then(|p| fs::read_to_string(&p).ok())
+        .and_then(|c| serde_json::from_str::<Vec<SavedRiotAccount>>(&c).ok())
+        .unwrap_or_default()
+}
+
+fn write_accounts_raw(accounts: &[SavedRiotAccount]) -> Result<(), String> {
+    let path = accounts_file_path()?;
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    let pretty = serde_json::to_string_pretty(accounts).map_err(|e| e.to_string())?;
+    fs::write(&path, pretty).map_err(|e| e.to_string())
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Kiểm tra nhanh token còn hạn không bằng cách giải mã phần payload của JWT
+/// và đọc trường `exp`. Trả về true nếu token còn hạn ít nhất `skew` giây nữa.
+fn jwt_still_valid(token: &str, skew: u64) -> bool {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() < 2 {
+        return false;
+    }
+    let payload = match general_purpose::URL_SAFE_NO_PAD.decode(parts[1]) {
+        Ok(p) => p,
+        Err(_) => match general_purpose::STANDARD_NO_PAD.decode(parts[1]) {
+            Ok(p) => p,
+            Err(_) => return false,
+        },
+    };
+    let json: serde_json::Value = match serde_json::from_slice(&payload) {
+        Ok(j) => j,
+        Err(_) => return false,
+    };
+    match json["exp"].as_u64() {
+        Some(exp) => exp > now_secs() + skew,
+        None => false,
+    }
+}
+
+/// Giải mã payload JWT và lấy một trường string (vd: "sub" = PUUID).
+fn jwt_extract_str(token: &str, key: &str) -> Option<String> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let payload = general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .or_else(|_| general_purpose::STANDARD_NO_PAD.decode(parts[1]))
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&payload).ok()?;
+    json[key].as_str().map(|s| s.to_string())
+}
+
+/// Trích region (vd "VN2") từ access_token. Riot nhét vào `dat.r`, hoặc trong
+/// mảng `clm` dưới dạng "rgn_VN2". Dùng để điền vào file session Riot Client.
+fn jwt_extract_region(token: &str) -> Option<String> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let payload = general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .or_else(|_| general_purpose::STANDARD_NO_PAD.decode(parts[1]))
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&payload).ok()?;
+
+    if let Some(r) = json["dat"]["r"].as_str() {
+        if !r.is_empty() {
+            return Some(r.to_string());
+        }
+    }
+    if let Some(arr) = json["clm"].as_array() {
+        for c in arr {
+            if let Some(s) = c.as_str() {
+                if let Some(rgn) = s.strip_prefix("rgn_") {
+                    if !rgn.is_empty() {
+                        return Some(rgn.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Thu thập tất cả cookie (name=value) từ một cây JSON, tìm mọi mảng "cookies".
+/// Dùng để bóc cookie phiên (ssid, clid, sub, ...) từ file session của Riot Client.
+fn collect_cookies_from_json(
+    value: &serde_json::Value,
+    out: &mut std::collections::HashMap<String, String>,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                if k == "cookies" {
+                    if let Some(arr) = v.as_array() {
+                        for c in arr {
+                            if let (Some(name), Some(val)) =
+                                (c["name"].as_str(), c["value"].as_str())
+                            {
+                                if !name.is_empty() && !val.is_empty() {
+                                    out.insert(name.to_string(), val.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                collect_cookies_from_json(v, out);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr {
+                collect_cookies_from_json(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Trích xuất chuỗi cookie phiên từ nội dung RiotGamesPrivateSettings.yaml.
+/// Hỗ trợ định dạng mới (`private: <base64 JSON>`) lẫn định dạng cũ (cookie list
+/// dạng name:/value: trong YAML thuần). Trả về None nếu không tìm thấy cookie nào.
+fn extract_reauth_cookies_from_yaml(yaml: &str) -> Option<String> {
+    let mut cookies: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    // Định dạng mới: dòng `private:` chứa blob base64 mã hoá JSON.
+    for line in yaml.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("private:") {
+            let b64 = rest.trim().trim_matches('"').trim_matches('\'');
+            if b64.is_empty() {
+                continue;
+            }
+            let decoded = general_purpose::STANDARD
+                .decode(b64)
+                .or_else(|_| general_purpose::URL_SAFE.decode(b64));
+            if let Ok(bytes) = decoded {
+                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    collect_cookies_from_json(&json, &mut cookies);
+                }
+            }
+        }
+    }
+
+    // Fallback: YAML thuần với danh sách cookie (name: / value:).
+    if cookies.is_empty() {
+        let mut last_name: Option<String> = None;
+        for line in yaml.lines() {
+            let t = line.trim();
+            if let Some(n) = t.strip_prefix("name:") {
+                last_name = Some(n.trim().trim_matches('"').trim_matches('\'').to_string());
+            } else if let Some(v) = t.strip_prefix("value:") {
+                if let Some(n) = last_name.take() {
+                    let val = v.trim().trim_matches('"').trim_matches('\'').to_string();
+                    if !n.is_empty() && !val.is_empty() {
+                        cookies.insert(n, val);
+                    }
+                }
+            }
+        }
+    }
+
+    if cookies.is_empty() {
+        return None;
+    }
+    Some(
+        cookies
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join("; "),
+    )
+}
+
+/// Đọc cookie phiên từ file session đã sao lưu của một tài khoản (theo puuid).
+fn read_backup_session_cookies(puuid: &str) -> Option<String> {
+    let app_data = std::env::var("APPDATA").ok()?;
+    let path = PathBuf::from(app_data)
+        .join("htssclub")
+        .join("riot_sessions")
+        .join(format!("{}.yaml", puuid));
+    let content = fs::read_to_string(&path).ok()?;
+    extract_reauth_cookies_from_yaml(&content)
+}
+
+/// Đọc cookie phiên từ file session đang hoạt động của Riot Client trên máy.
+fn read_live_session_cookies() -> Option<String> {
+    let local = std::env::var("LOCALAPPDATA").ok()?;
+    let path = PathBuf::from(local)
+        .join("Riot Games")
+        .join("Riot Client")
+        .join("Data")
+        .join("RiotGamesPrivateSettings.yaml");
+    let content = fs::read_to_string(&path).ok()?;
+    extract_reauth_cookies_from_yaml(&content)
+}
+
+/// Làm mới token cho một tài khoản đã lưu (theo puuid).
+/// Ưu tiên dùng reauth cookie; nếu thất bại và có username/password thì đăng
+/// nhập lại bằng mật khẩu. Lưu token mới vào file và trả về tài khoản đã cập nhật.
+async fn refresh_account_tokens(puuid: &str) -> Result<SavedRiotAccount, String> {
+    let mut accounts = read_accounts_raw();
+    let idx = accounts
+        .iter()
+        .position(|a| a.puuid == puuid)
+        .ok_or_else(|| "Không tìm thấy tài khoản đã lưu".to_string())?;
+
+    let (username, password, cookies) = {
+        let a = &accounts[idx];
+        (a.username.clone(), a.password.clone(), a.reauth_cookies.clone())
+    };
+
+    // 1. Thử gia hạn bằng cookie đã lưu (không cần mật khẩu).
+    if let Some(ck) = cookies.as_ref().filter(|c| !c.is_empty()) {
+        if let Ok((new_auth, new_ent, new_cookies)) = riot_reauth_with_cookies(ck).await {
+            let acc = &mut accounts[idx];
+            acc.auth_token = new_auth;
+            acc.entitlement_token = new_ent;
+            if !new_cookies.is_empty() {
+                acc.reauth_cookies = Some(new_cookies);
+            }
+            acc.last_updated = now_secs();
+            let updated = acc.clone();
+            write_accounts_raw(&accounts)?;
+            return Ok(updated);
+        }
+    }
+
+    // 2. Tài khoản kiểu Riot Client: lấy cookie phiên từ file session đã sao
+    //    lưu (RiotGamesPrivateSettings.yaml chứa ssid sống rất lâu) để gia hạn.
+    if let Some(ck) = read_backup_session_cookies(puuid).filter(|c| !c.is_empty()) {
+        if let Ok((new_auth, new_ent, new_cookies)) = riot_reauth_with_cookies(&ck).await {
+            let acc = &mut accounts[idx];
+            acc.auth_token = new_auth;
+            acc.entitlement_token = new_ent;
+            // Lưu lại cookie để lần sau gia hạn nhanh hơn.
+            acc.reauth_cookies = Some(if new_cookies.is_empty() { ck } else { new_cookies });
+            acc.last_updated = now_secs();
+            let updated = acc.clone();
+            write_accounts_raw(&accounts)?;
+            return Ok(updated);
+        }
+    }
+
+    // 3. Fallback: đăng nhập lại bằng mật khẩu (nếu có).
+    if let (Some(u), Some(p)) = (username, password) {
+        if !u.is_empty() && !p.is_empty() {
+            let (new_auth, new_ent, _puuid, new_cookies) = riot_login(&u, &p).await?;
+            let acc = &mut accounts[idx];
+            acc.auth_token = new_auth;
+            acc.entitlement_token = new_ent;
+            if !new_cookies.is_empty() {
+                acc.reauth_cookies = Some(new_cookies);
+            }
+            acc.last_updated = now_secs();
+            let updated = acc.clone();
+            write_accounts_raw(&accounts)?;
+            return Ok(updated);
+        }
+    }
+
+    Err("SESSION_EXPIRED".to_string())
+}
+
+/// Lệnh: làm mới thủ công token của một tài khoản đã lưu (nút "Gia hạn").
+#[tauri::command]
+async fn refresh_valorant_account(puuid: String) -> Result<SavedRiotAccount, String> {
+    let mut acc = refresh_account_tokens(&puuid).await?;
+    // Ẩn mật khẩu trước khi trả về frontend.
+    if acc.password.is_some() {
+        acc.password = Some("••••••••".to_string());
+    }
+    acc.reauth_cookies = None;
+    Ok(acc)
+}
+
+/// Lệnh: trả về credentials hợp lệ của tài khoản ĐANG được chọn để gọi API.
+/// - Nếu active là "running_client": đọc token trực tiếp từ Riot Client đang chạy.
+/// - Nếu active là tài khoản đã lưu: dùng token đã lưu, tự động gia hạn nếu hết hạn.
+#[tauri::command]
+async fn get_active_credentials() -> Result<RiotCredentials, String> {
+    let active = get_active_valorant_account().await?;
+
+    if active == "running_client" {
+        return get_riot_credentials().await;
+    }
+
+    // Tài khoản đã lưu.
+    let accounts = read_accounts_raw();
+    let acc = accounts
+        .iter()
+        .find(|a| a.puuid == active)
+        .cloned()
+        .ok_or_else(|| "Không tìm thấy tài khoản đang chọn".to_string())?;
+
+    // Token còn hạn → dùng luôn; nếu sắp/đã hết hạn → gia hạn.
+    let valid = jwt_still_valid(&acc.auth_token, 120);
+    let acc = if valid {
+        acc
+    } else {
+        refresh_account_tokens(&active).await?
+    };
+
+    Ok(RiotCredentials {
+        port: String::new(),
+        password: String::new(),
+        auth_token: acc.auth_token,
+        entitlement_token: acc.entitlement_token,
+        puuid: acc.puuid,
+        shard: acc.shard,
+        game_name: Some(acc.game_name),
+    })
 }
 
 fn kill_riot_client_processes() {
@@ -592,6 +1556,9 @@ async fn add_valorant_account_client() -> Result<SavedRiotAccount, String> {
         entitlement_token,
         last_updated: now,
         login_type: "riot_client".to_string(),
+        // Bóc cookie phiên (ssid sống lâu) từ file session của Riot Client đang
+        // chạy để có thể tự gia hạn token sau này mà không cần mở lại Client.
+        reauth_cookies: read_live_session_cookies(),
     };
 
     // Sao lưu tệp session của Riot Games Client để phục vụ tính năng khôi phục tài khoản
@@ -703,19 +1670,110 @@ async fn set_active_valorant_account(puuid: String) -> Result<(), String> {
     let active_config = ActiveAccountConfig { puuid: Some(puuid.clone()) };
     let pretty = serde_json::to_string_pretty(&active_config).map_err(|e| e.to_string())?;
     fs::write(&active_path, pretty).map_err(|e| e.to_string())?;
-    
-    // Nếu chuyển sang tài khoản đã sao lưu, khôi phục session tệp RiotGamesPrivateSettings.yaml
-    if puuid != "running_client" {
-        let _ = restore_riot_session(&puuid);
-        // Tự động mở lại Riot Client sau khi khôi phục session thành công
-        let _ = open_riot_client();
-    } else {
-        // Khôi phục lại session mặc định gốc của máy tính
+
+    if puuid == "running_client" {
+        // Khôi phục lại session mặc định gốc của máy tính, mở lại Riot Client.
         let _ = restore_riot_session("original_session");
-        // Tự động mở lại Riot Client mặc định
+        let _ = open_riot_client();
+        return Ok(());
+    }
+
+    // Xác định loại tài khoản để quyết định cách kích hoạt.
+    let login_type = read_accounts_raw()
+        .into_iter()
+        .find(|a| a.puuid == puuid)
+        .map(|a| a.login_type)
+        .unwrap_or_else(|| "riot_client".to_string());
+
+    if login_type == "credentials" {
+        // Tài khoản mật khẩu dùng token đã lưu (tự gia hạn) để gọi API trực
+        // tiếp, không cần Riot Client. Chỉ cần đảm bảo token còn hạn.
+        let _ = refresh_account_if_needed(&puuid).await;
+    } else {
+        // Tài khoản kiểu Riot Client: gia hạn session (ssid xoay vòng) rồi khôi
+        // phục tệp session và mở lại Client để chắc chắn đăng nhập được.
+        let _ = refresh_riot_client_session(&puuid).await;
+        let _ = restore_riot_session(&puuid);
         let _ = open_riot_client();
     }
-    
+
+    Ok(())
+}
+
+/// Gia hạn phiên SSO của một tài khoản kiểu Riot Client trước khi khôi phục vào
+/// Client. Dùng reauth cookie (ssid) đã lưu để lấy token + cookie mới, rồi cập
+/// nhật lại file session yaml (`riot_sessions/<puuid>.yaml`) với ssid mới nhất.
+/// Không trả lỗi ra ngoài — nếu gia hạn thất bại vẫn dùng session cũ.
+async fn refresh_riot_client_session(puuid: &str) -> Result<(), String> {
+    // Lấy cookie reauth từ tài khoản đã lưu, hoặc từ chính file session.
+    let accounts = read_accounts_raw();
+    let acc = accounts.into_iter().find(|a| a.puuid == puuid);
+    let cookies = acc
+        .as_ref()
+        .and_then(|a| a.reauth_cookies.clone())
+        .filter(|c| !c.is_empty())
+        .or_else(|| read_backup_session_cookies(puuid));
+
+    let cookies = match cookies {
+        Some(c) => c,
+        None => return Ok(()), // không có gì để gia hạn
+    };
+
+    // Gọi reauth để lấy access_token + cookie phiên mới.
+    let (new_auth, _new_ent, new_cookies) = match riot_reauth_with_cookies(&cookies).await {
+        Ok(v) => v,
+        Err(_) => return Ok(()), // ssid hết hạn hẳn → giữ session cũ, để Client tự xử lý
+    };
+
+    // Chuyển chuỗi cookie mới thành RiotCookie để dựng lại file session.
+    let mut riot_cookies: Vec<RiotCookie> = Vec::new();
+    for pair in new_cookies.split(';') {
+        if let Some((k, v)) = pair.split_once('=') {
+            let name = k.trim().to_string();
+            let value = v.trim().to_string();
+            if name.is_empty() || value.is_empty() {
+                continue;
+            }
+            riot_cookies.push(RiotCookie {
+                name,
+                value,
+                domain: "auth.riotgames.com".to_string(),
+                http_only: true,
+                secure: true,
+                persistent: true,
+            });
+        }
+    }
+
+    // Dựng lại file session với ssid mới (nếu có).
+    let region = jwt_extract_region(&new_auth).unwrap_or_default();
+    if riot_cookies.iter().any(|c| c.name == "ssid") {
+        let _ = save_browser_session_yaml(puuid, &region, &riot_cookies);
+        log::info!("[riot-login] đã gia hạn session cho {}", puuid);
+    }
+
+    // Cập nhật token + cookie mới vào danh sách tài khoản để API vẫn dùng được.
+    let mut accounts = read_accounts_raw();
+    if let Some(a) = accounts.iter_mut().find(|a| a.puuid == puuid) {
+        a.auth_token = new_auth;
+        if !new_cookies.is_empty() {
+            a.reauth_cookies = Some(new_cookies);
+        }
+        a.last_updated = now_secs();
+        let _ = write_accounts_raw(&accounts);
+    }
+
+    Ok(())
+}
+
+/// Gia hạn token nếu sắp/đã hết hạn; bỏ qua nếu còn hạn. Không trả lỗi ra ngoài.
+async fn refresh_account_if_needed(puuid: &str) -> Result<(), String> {
+    let acc = read_accounts_raw().into_iter().find(|a| a.puuid == puuid);
+    if let Some(acc) = acc {
+        if !jwt_still_valid(&acc.auth_token, 120) {
+            let _ = refresh_account_tokens(puuid).await?;
+        }
+    }
     Ok(())
 }
 
@@ -1009,6 +2067,541 @@ fn open_riot_client() -> Result<(), String> {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// QUẢN LÝ TÀI KHOẢN STEAM
+//
+// Steam lưu danh sách tài khoản đã đăng nhập ở `<Steam>/config/loginusers.vdf`
+// và tài khoản tự đăng nhập ở registry `HKCU\Software\Valve\Steam\AutoLoginUser`.
+// Để đổi tài khoản: đặt AutoLoginUser = account name, bật cờ trong vdf, tắt
+// Steam rồi mở lại — Steam sẽ tự đăng nhập (nếu RememberPassword được bật).
+// ════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SteamAccount {
+    pub steam_id: String,
+    pub account_name: String,
+    pub persona_name: String,
+    pub remember_password: bool,
+    pub most_recent: bool,
+    pub timestamp: u64,
+    // Các trường vdf gốc để có thể khôi phục đầy đủ entry vào loginusers.vdf
+    // khi chuyển tài khoản (kể cả khi Steam đã xoá account khỏi vdf).
+    #[serde(default)]
+    pub wants_offline_mode: String,
+    #[serde(default)]
+    pub skip_offline_warning: String,
+    #[serde(default)]
+    pub allow_auto_login: String,
+    // Steam còn phiên đăng nhập hợp lệ cho tài khoản này không (token còn sống).
+    // Chỉ tài khoản có phiên còn sống mới đăng nhập thẳng được; còn lại phải
+    // nhập lại mật khẩu. Trường runtime, không lưu vào file.
+    #[serde(default)]
+    pub has_session: bool,
+}
+
+/// Đường dẫn file quản lý tài khoản Steam của riêng app.
+fn steam_accounts_file() -> Result<PathBuf, String> {
+    let app_data = std::env::var("APPDATA").map_err(|e| e.to_string())?;
+    let dir = PathBuf::from(&app_data).join("htssclub");
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    Ok(dir.join("steam_accounts.json"))
+}
+
+/// Đọc danh sách tài khoản Steam đã lưu trong file quản lý của app.
+fn read_managed_steam_accounts() -> Vec<SteamAccount> {
+    steam_accounts_file()
+        .ok()
+        .filter(|p| p.exists())
+        .and_then(|p| fs::read_to_string(&p).ok())
+        .and_then(|c| serde_json::from_str::<Vec<SteamAccount>>(&c).ok())
+        .unwrap_or_default()
+}
+
+/// Ghi danh sách tài khoản Steam vào file quản lý của app.
+fn write_managed_steam_accounts(accounts: &[SteamAccount]) -> Result<(), String> {
+    let path = steam_accounts_file()?;
+    let pretty = serde_json::to_string_pretty(accounts).map_err(|e| e.to_string())?;
+    fs::write(&path, pretty).map_err(|e| e.to_string())
+}
+
+/// Lấy đường dẫn cài đặt Steam từ registry (fallback về thư mục mặc định).
+fn get_steam_path() -> Option<PathBuf> {
+    let output = create_silent_command("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Valve\Steam",
+            "/v",
+            "SteamPath",
+        ])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        if line.contains("SteamPath") {
+            // Dạng: "    SteamPath    REG_SZ    c:/program files (x86)/steam"
+            if let Some(idx) = line.find("REG_SZ") {
+                let p = line[idx + "REG_SZ".len()..].trim();
+                if !p.is_empty() {
+                    return Some(PathBuf::from(p.replace('/', "\\")));
+                }
+            }
+        }
+    }
+    let default = PathBuf::from(r"C:\Program Files (x86)\Steam");
+    if default.exists() {
+        Some(default)
+    } else {
+        None
+    }
+}
+
+/// Đọc giá trị registry AutoLoginUser hiện tại.
+fn get_steam_autologin_user() -> Option<String> {
+    let output = create_silent_command("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Valve\Steam",
+            "/v",
+            "AutoLoginUser",
+        ])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        if line.contains("AutoLoginUser") {
+            if let Some(idx) = line.find("REG_SZ") {
+                let v = line[idx + "REG_SZ".len()..].trim();
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Parser tối giản cho định dạng VDF của loginusers.vdf.
+/// Trả về danh sách (steam_id, map<key, value>).
+fn parse_loginusers_vdf(content: &str) -> Vec<(String, std::collections::HashMap<String, String>)> {
+    let mut result = Vec::new();
+    let mut current_id: Option<String> = None;
+    let mut current_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut depth = 0; // 0 = ngoài "users", 1 = trong users, 2 = trong 1 account
+
+    // Tách các token nằm trong dấu ngoặc kép.
+    fn quoted_tokens(line: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '"' {
+                let mut s = String::new();
+                for c2 in chars.by_ref() {
+                    if c2 == '"' {
+                        break;
+                    }
+                    s.push(c2);
+                }
+                out.push(s);
+            }
+        }
+        out
+    }
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == "{" {
+            depth += 1;
+            continue;
+        }
+        if trimmed == "}" {
+            if depth == 2 {
+                // Kết thúc một account.
+                if let Some(id) = current_id.take() {
+                    result.push((id, std::mem::take(&mut current_map)));
+                }
+            }
+            if depth > 0 {
+                depth -= 1;
+            }
+            continue;
+        }
+
+        let tokens = quoted_tokens(trimmed);
+        if depth == 1 && tokens.len() == 1 {
+            // Tên block account = steam_id.
+            current_id = Some(tokens[0].clone());
+            current_map.clear();
+        } else if depth == 2 && tokens.len() >= 2 {
+            current_map.insert(tokens[0].clone(), tokens[1].clone());
+        }
+    }
+
+    result
+}
+
+/// Đọc tài khoản từ loginusers.vdf (trạng thái sống của Steam).
+fn read_vdf_steam_accounts() -> Vec<SteamAccount> {
+    let steam_path = match get_steam_path() {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+    let vdf_path = steam_path.join("config").join("loginusers.vdf");
+    if !vdf_path.exists() {
+        return Vec::new();
+    }
+    let bytes = match fs::read(&vdf_path) {
+        Ok(b) => b,
+        Err(_) => return Vec::new(),
+    };
+    let content = String::from_utf8_lossy(&bytes);
+
+    parse_loginusers_vdf(&content)
+        .into_iter()
+        .map(|(steam_id, m)| SteamAccount {
+            steam_id,
+            account_name: m.get("AccountName").cloned().unwrap_or_default(),
+            persona_name: m.get("PersonaName").cloned().unwrap_or_default(),
+            remember_password: m.get("RememberPassword").map(|v| v == "1").unwrap_or(false),
+            most_recent: m.get("MostRecent").map(|v| v == "1").unwrap_or(false),
+            timestamp: m.get("Timestamp").and_then(|v| v.parse().ok()).unwrap_or(0),
+            wants_offline_mode: m.get("WantsOfflineMode").cloned().unwrap_or_else(|| "0".to_string()),
+            skip_offline_warning: m.get("SkipOfflineModeWarning").cloned().unwrap_or_else(|| "0".to_string()),
+            allow_auto_login: m.get("AllowAutoLogin").cloned().unwrap_or_else(|| "0".to_string()),
+            has_session: true,
+        })
+        .collect()
+}
+
+#[tauri::command]
+async fn get_steam_accounts() -> Result<Vec<SteamAccount>, String> {
+    // 1. Đọc trạng thái sống từ loginusers.vdf.
+    let live = read_vdf_steam_accounts();
+
+    // 2. Gộp vào danh sách quản lý riêng của app: thêm mới / cập nhật thông tin,
+    //    nhưng GIỮ LẠI tài khoản đã lưu kể cả khi Steam đã xoá khỏi vdf.
+    let live_ids: std::collections::HashSet<String> =
+        live.iter().map(|a| a.steam_id.clone()).collect();
+    let mut managed = read_managed_steam_accounts();
+    for acc in &live {
+        if let Some(existing) = managed.iter_mut().find(|a| a.steam_id == acc.steam_id) {
+            // Cập nhật thông tin mới nhất từ vdf.
+            existing.account_name = acc.account_name.clone();
+            if !acc.persona_name.is_empty() {
+                existing.persona_name = acc.persona_name.clone();
+            }
+            existing.remember_password = acc.remember_password;
+            existing.most_recent = acc.most_recent;
+            if acc.timestamp > 0 {
+                existing.timestamp = acc.timestamp;
+            }
+            existing.wants_offline_mode = acc.wants_offline_mode.clone();
+            existing.skip_offline_warning = acc.skip_offline_warning.clone();
+            existing.allow_auto_login = acc.allow_auto_login.clone();
+        } else {
+            managed.push(acc.clone());
+        }
+    }
+
+    let _ = write_managed_steam_accounts(&managed);
+
+    // 3. Đánh dấu tài khoản nào còn phiên đăng nhập sống (có mặt trong vdf của
+    //    Steam) — chỉ những tài khoản này mới đăng nhập thẳng được.
+    for acc in managed.iter_mut() {
+        acc.has_session = live_ids.contains(&acc.steam_id);
+    }
+
+    // 4. Sắp xếp theo lần đăng nhập gần nhất rồi trả về.
+    managed.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    Ok(managed)
+}
+
+/// Lấy ảnh đại diện của một tài khoản Steam dưới dạng data URI base64.
+/// (Không thể load trực tiếp file local trong webview nên trả về base64.)
+#[tauri::command]
+async fn get_steam_avatar(steam_id: String) -> Result<Option<String>, String> {
+    let steam_path = match get_steam_path() {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let avatar_path = steam_path
+        .join("config")
+        .join("avatarcache")
+        .join(format!("{}.png", steam_id));
+    if !avatar_path.exists() {
+        return Ok(None);
+    }
+    let bytes = match fs::read(&avatar_path) {
+        Ok(b) => b,
+        Err(_) => return Ok(None),
+    };
+    let b64 = general_purpose::STANDARD.encode(&bytes);
+    Ok(Some(format!("data:image/png;base64,{}", b64)))
+}
+
+/// Tắt Steam SẠCH SẼ và chờ thoát hẳn. Quan trọng: chỉ dùng `-shutdown` (cách
+/// chính thức) và CHỜ Steam tự đóng. KHÔNG force-kill giữa chừng vì sẽ tạo file
+/// `.crash` khiến Steam khởi động lại ở chế độ phục hồi và bỏ qua AutoLoginUser.
+/// Trả về true nếu Steam đã đóng hẳn.
+fn shutdown_steam_clean() -> bool {
+    let steam_running = || -> bool {
+        create_silent_command("tasklist")
+            .args(["/FI", "IMAGENAME eq steam.exe", "/NH"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("steam.exe"))
+            .unwrap_or(false)
+    };
+
+    if !steam_running() {
+        return true;
+    }
+
+    // Gửi lệnh thoát chính thức.
+    if let Some(steam_path) = get_steam_path() {
+        let exe = steam_path.join("steam.exe");
+        if exe.exists() {
+            let _ = create_silent_command(exe).args(["-shutdown"]).spawn();
+        }
+    }
+
+    // Chờ Steam tự đóng hoàn toàn (tối đa ~15s). Steam cần thời gian flush token.
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if !steam_running() {
+            // Chờ thêm một nhịp để Steam ghi xong file config.
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            return true;
+        }
+    }
+
+    // Hết thời gian mà Steam vẫn chạy → để gọi nơi khác quyết định.
+    false
+}
+
+/// Tắt Steam (ưu tiên sạch; chỉ force-kill khi `-shutdown` không hiệu quả).
+fn kill_steam_processes() {
+    if shutdown_steam_clean() {
+        return;
+    }
+    // Fallback: Steam treo, buộc phải kill.
+    for img in ["steam.exe", "steamwebhelper.exe", "steamservice.exe"] {
+        let _ = create_silent_command("taskkill")
+            .args(["/F", "/T", "/IM", img])
+            .output();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+}
+
+/// Mở lại Steam. Nếu có `login_user`, truyền `-login <user>` để Steam đăng nhập
+/// thẳng tài khoản đó (kết hợp token đã lưu). Nếu không, mở bình thường (Steam
+/// dùng AutoLoginUser trong registry).
+fn launch_steam_with(login_user: Option<&str>) -> Result<(), String> {
+    let steam_path = get_steam_path().ok_or_else(|| "Không tìm thấy Steam.".to_string())?;
+    let exe = steam_path.join("steam.exe");
+    if exe.exists() {
+        let mut cmd = create_silent_command(&exe);
+        if let Some(user) = login_user {
+            if !user.is_empty() {
+                cmd.args(["-login", user]);
+            }
+        }
+        cmd.spawn()
+            .map_err(|e| format!("Không thể chạy Steam: {}", e))?;
+        Ok(())
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            create_silent_command("cmd")
+                .args(["/C", "start", "steam://open/main"])
+                .spawn()
+                .map_err(|e| format!("Không thể mở Steam: {}", e))?;
+            Ok(())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Err("Chỉ hỗ trợ trên Windows.".to_string())
+        }
+    }
+}
+
+/// Mở lại Steam (theo AutoLoginUser trong registry).
+fn launch_steam_internal() -> Result<(), String> {
+    launch_steam_with(None)
+}
+
+#[tauri::command]
+async fn launch_steam() -> Result<(), String> {
+    launch_steam_internal()
+}
+
+/// Thêm tài khoản Steam mới: tắt Steam, xoá AutoLoginUser để Steam mở ra màn
+/// hình đăng nhập trống, người dùng đăng nhập tài khoản mới (nhớ tích "Ghi nhớ
+/// mật khẩu") thì lần sau sẽ xuất hiện trong danh sách.
+#[tauri::command]
+async fn add_steam_account() -> Result<(), String> {
+    // 1. Tắt Steam sạch trước.
+    kill_steam_processes();
+
+    // 2. Xoá AutoLoginUser để Steam hiện màn đăng nhập (không tự vào tài khoản cũ).
+    let _ = create_silent_command("reg")
+        .args([
+            "delete",
+            r"HKCU\Software\Valve\Steam",
+            "/v",
+            "AutoLoginUser",
+            "/f",
+        ])
+        .output();
+
+    // 3. Mở lại Steam ở màn hình đăng nhập.
+    launch_steam_internal()?;
+    Ok(())
+}
+
+/// Đổi tài khoản Steam đang đăng nhập: tắt Steam, đặt AutoLoginUser + cập nhật
+/// cờ trong vdf, rồi mở lại. Steam sẽ tự đăng nhập nếu tài khoản có RememberPassword.
+#[tauri::command]
+async fn switch_steam_account(account_name: String, steam_id: String) -> Result<(), String> {
+    if account_name.trim().is_empty() {
+        return Err("Tên tài khoản trống.".to_string());
+    }
+
+    // 1. TẮT STEAM TRƯỚC. Steam giữ config trong bộ nhớ và ghi đè loginusers.vdf
+    //    khi thoát, nên phải tắt sạch trước rồi mới ghi cấu hình.
+    kill_steam_processes();
+
+    // 2. Đặt registry AutoLoginUser = account_name.
+    let set_user = create_silent_command("reg")
+        .args([
+            "add",
+            r"HKCU\Software\Valve\Steam",
+            "/v",
+            "AutoLoginUser",
+            "/t",
+            "REG_SZ",
+            "/d",
+            &account_name,
+            "/f",
+        ])
+        .output()
+        .map_err(|e| format!("Lỗi đặt AutoLoginUser: {}", e))?;
+    if !set_user.status.success() {
+        return Err("Không thể ghi AutoLoginUser vào registry.".to_string());
+    }
+
+    // Steam còn đọc AutoLoginUser ở nhánh con theo ngôn ngữ; ghi cả hai cho chắc.
+    let _ = create_silent_command("reg")
+        .args([
+            "add",
+            r"HKCU\Software\Valve\Steam\ActiveProcess",
+            "/v",
+            "AutoLoginUser",
+            "/t",
+            "REG_SZ",
+            "/d",
+            &account_name,
+            "/f",
+        ])
+        .output();
+
+    // 3. Bật RememberPassword (DWORD) để Steam không hỏi mật khẩu.
+    let _ = create_silent_command("reg")
+        .args([
+            "add",
+            r"HKCU\Software\Valve\Steam",
+            "/v",
+            "RememberPassword",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "1",
+            "/f",
+        ])
+        .output();
+
+    // 4. Khôi phục & cập nhật loginusers.vdf từ danh sách quản lý: tài khoản
+    //    được chọn được bật MostRecent/AllowAutoLogin, các tài khoản khác tắt.
+    //    Dựng lại toàn bộ file để chắc chắn entry tồn tại (kể cả khi Steam đã
+    //    xoá account khỏi vdf trước đó).
+    if let Some(steam_path) = get_steam_path() {
+        let vdf_path = steam_path.join("config").join("loginusers.vdf");
+        let managed = read_managed_steam_accounts();
+        let new_vdf = generate_loginusers_vdf(&managed, &steam_id);
+        let _ = fs::write(&vdf_path, new_vdf);
+    }
+
+    // 5. Mở lại Steam, đăng nhập thẳng tài khoản đã chọn.
+    launch_steam_with(Some(&account_name))?;
+    Ok(())
+}
+
+/// Dựng lại toàn bộ nội dung loginusers.vdf từ danh sách tài khoản quản lý.
+/// Tài khoản `active_id` được đặt MostRecent=1 & AllowAutoLogin=1, các tài khoản
+/// còn lại đặt =0. Đảm bảo entry của active_id luôn tồn tại trong file.
+fn generate_loginusers_vdf(accounts: &[SteamAccount], active_id: &str) -> String {
+    fn esc(s: &str) -> String {
+        s.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    let mut out = String::from("\"users\"\n{\n");
+    for acc in accounts {
+        if acc.steam_id.is_empty() || acc.account_name.is_empty() {
+            continue;
+        }
+        let is_active = acc.steam_id == active_id;
+        let most_recent = if is_active { "1" } else { "0" };
+        let allow_auto = if is_active { "1" } else { "0" };
+        let remember = if acc.remember_password || is_active { "1" } else { "0" };
+
+        out.push_str(&format!("\t\"{}\"\n\t{{\n", esc(&acc.steam_id)));
+        out.push_str(&format!("\t\t\"AccountName\"\t\t\"{}\"\n", esc(&acc.account_name)));
+        out.push_str(&format!("\t\t\"PersonaName\"\t\t\"{}\"\n", esc(&acc.persona_name)));
+        out.push_str(&format!("\t\t\"RememberPassword\"\t\t\"{}\"\n", remember));
+        out.push_str(&format!("\t\t\"WantsOfflineMode\"\t\t\"{}\"\n",
+            if acc.wants_offline_mode.is_empty() { "0" } else { &acc.wants_offline_mode }));
+        out.push_str(&format!("\t\t\"SkipOfflineModeWarning\"\t\t\"{}\"\n",
+            if acc.skip_offline_warning.is_empty() { "0" } else { &acc.skip_offline_warning }));
+        out.push_str(&format!("\t\t\"AllowAutoLogin\"\t\t\"{}\"\n", allow_auto));
+        out.push_str(&format!("\t\t\"MostRecent\"\t\t\"{}\"\n", most_recent));
+        out.push_str(&format!("\t\t\"Timestamp\"\t\t\"{}\"\n", acc.timestamp));
+        out.push_str("\t}\n");
+    }
+    out.push_str("}\n");
+    out
+}
+
+/// Xoá một tài khoản Steam khỏi loginusers.vdf (chỉ gỡ khỏi danh sách lưu,
+/// không xoá dữ liệu game).
+#[tauri::command]
+async fn remove_steam_account(steam_id: String) -> Result<(), String> {
+    // 1. Gỡ khỏi danh sách quản lý của app.
+    let mut managed = read_managed_steam_accounts();
+    managed.retain(|a| a.steam_id != steam_id);
+    write_managed_steam_accounts(&managed)?;
+
+    // 2. Gỡ khỏi loginusers.vdf của Steam (dựng lại từ danh sách quản lý mới,
+    //    giữ nguyên tài khoản đang active nếu có).
+    let active_id = read_vdf_steam_accounts()
+        .into_iter()
+        .find(|a| a.most_recent)
+        .map(|a| a.steam_id)
+        .unwrap_or_default();
+    if let Some(steam_path) = get_steam_path() {
+        let vdf_path = steam_path.join("config").join("loginusers.vdf");
+        if vdf_path.exists() {
+            let new_vdf = generate_loginusers_vdf(&managed, &active_id);
+            let _ = fs::write(&vdf_path, new_vdf);
+        }
+    }
+    Ok(())
+}
+
+/// Lấy tên tài khoản Steam đang được đặt tự động đăng nhập (AutoLoginUser).
+#[tauri::command]
+async fn get_active_steam_account() -> Result<Option<String>, String> {
+    Ok(get_steam_autologin_user())
+}
+
+
 static ASYNC_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 fn get_async_http_client() -> &'static reqwest::Client {
@@ -1135,6 +2728,40 @@ fn get_latest_discord_app_dir(discord_dir: &std::path::Path) -> Option<PathBuf> 
     latest_dir
 }
 
+/// Kiểm tra xem một thư mục resources của Discord đã bị Equicord patch hay chưa.
+///
+/// Equilotl (trình cài Equicord) inject bằng cách:
+///   1. Đổi tên `app.asar` gốc thành `_app.asar`.
+///   2. Thay `app.asar` bằng một loader nhỏ `require(...equicord.asar)`.
+///
+/// Một số phiên bản cũ thì tạo thẳng thư mục `resources/app` chứa loader.
+/// Hàm này xử lý cả hai trường hợp.
+fn is_resources_patched(resources_dir: &std::path::Path) -> bool {
+    // Cách inject cũ: tồn tại thư mục resources/app
+    let legacy_app = resources_dir.join("app");
+    if legacy_app.is_dir() {
+        return true;
+    }
+
+    // Cách inject hiện tại: app.asar gốc được đổi tên thành _app.asar
+    let backup_asar = resources_dir.join("_app.asar");
+    let app_asar = resources_dir.join("app.asar");
+    if backup_asar.exists() && app_asar.exists() {
+        // Xác nhận app.asar là loader stub trỏ tới equicord.asar
+        if let Ok(content) = fs::read(&app_asar) {
+            // Loader stub rất nhỏ; chỉ đọc/so khớp khi file đủ nhỏ để tránh quét asar lớn
+            if content.len() < 4096 {
+                let text = String::from_utf8_lossy(&content).to_lowercase();
+                if text.contains("equicord.asar") || text.contains("vencord.asar") {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
 #[tauri::command]
 async fn check_equicord_installed() -> bool {
     let local_app_data = match std::env::var("LOCALAPPDATA") {
@@ -1148,8 +2775,8 @@ async fn check_equicord_installed() -> bool {
         let discord_dir = PathBuf::from(&local_app_data).join(branch);
         if discord_dir.exists() {
             if let Some(latest_app_dir) = get_latest_discord_app_dir(&discord_dir) {
-                let patch_path = latest_app_dir.join("resources").join("app");
-                if patch_path.exists() {
+                let resources_dir = latest_app_dir.join("resources");
+                if is_resources_patched(&resources_dir) {
                     return true;
                 }
             }
@@ -1194,15 +2821,38 @@ async fn install_equicord() -> Result<String, String> {
     file.write_all(&bytes).map_err(|e| e.to_string())?;
     drop(file);
 
-    // Mở EquilotlCli.exe trong một cửa sổ Command Prompt mới với tham số -install để hiện thẳng màn hình chọn đường dẫn Discord
-    let status = create_silent_command("cmd")
-        .args(&["/C", "start", "cmd.exe", "/C", installer_path.to_str().unwrap(), "-install"])
-        .status();
+    // Chạy EquilotlCli.exe hoàn toàn ẩn (không hiện terminal).
+    //
+    // Khi truyền cả `-install` và `-branch auto`, trình cài chạy ở chế độ
+    // non-interactive: tự chọn bản Discord và patch ngay, không hỏi gì và
+    // không chờ "Press Enter to exit". Vì vậy ta không cần mở cửa sổ CMD.
+    let installer_path_owned = installer_path.clone();
+    let output = tokio::task::spawn_blocking(move || {
+        create_silent_command(&installer_path_owned)
+            .args(&["-install", "-branch", "auto"])
+            .output()
+    })
+    .await
+    .map_err(|e| format!("Lỗi chạy trình cài đặt: {}", e))?;
 
-    match status {
-        Ok(s) if s.success() => Ok("Đã mở cửa sổ cài đặt Equicord dưới dạng CMD! Bạn chỉ cần nhấn Enter tại cửa sổ đen vừa xuất hiện để xác nhận cài đặt.".to_string()),
-        Ok(_) => Err("Không thể mở cửa sổ CMD cài đặt.".to_string()),
-        Err(e) => Err(format!("Lỗi khi khởi chạy trình cài đặt: {}", e)),
+    let output = output.map_err(|e| format!("Lỗi khi khởi chạy trình cài đặt: {}", e))?;
+
+    if output.status.success() {
+        Ok("Đã cài đặt Equicord thành công! Hãy mở lại Discord để áp dụng.".to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Gộp stderr/stdout để lấy thông báo lỗi hữu ích nhất từ trình cài.
+        let detail = if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else {
+            stdout.trim().to_string()
+        };
+        if detail.is_empty() {
+            Err("Cài đặt Equicord thất bại. Hãy chắc chắn đã đóng Discord rồi thử lại.".to_string())
+        } else {
+            Err(format!("Cài đặt Equicord thất bại: {}", detail))
+        }
     }
 }
 
@@ -2316,6 +3966,499 @@ async fn fetch_epic_games() -> Result<String, String> {
     Ok(text)
 }
 
+// ============================================================================
+//  TEXT-TO-SPEECH & VOICE CHANGER
+//  Two engines:
+//   - Google Translate TTS (simple, for plain language codes like "vi"/"en")
+//   - Microsoft Edge Neural TTS via `msedge-tts` (high quality, many voices,
+//     supports pitch/rate adjustment → used for the voice changer).
+//  Audio is returned as a `data:` URL (base64) so the WebView can fetch+decode
+//  it without CORS issues.
+// ============================================================================
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TtsVoice {
+    pub id: String,        // Edge voice short name, e.g. "vi-VN-HoaiMyNeural"
+    pub label: String,     // Human friendly label
+    pub locale: String,    // e.g. "vi-VN"
+    pub gender: String,    // "Female" | "Male"
+    pub flag: String,      // emoji flag for UI
+}
+
+/// Curated multilingual voice list for the voice changer UI.
+fn curated_tts_voices() -> Vec<TtsVoice> {
+    let v = |id: &str, label: &str, locale: &str, gender: &str, flag: &str| TtsVoice {
+        id: id.to_string(),
+        label: label.to_string(),
+        locale: locale.to_string(),
+        gender: gender.to_string(),
+        flag: flag.to_string(),
+    };
+    vec![
+        // Vietnamese
+        v("vi-VN-HoaiMyNeural", "Hoài My (Nữ)", "vi-VN", "Female", "🇻🇳"),
+        v("vi-VN-NamMinhNeural", "Nam Minh (Nam)", "vi-VN", "Male", "🇻🇳"),
+        // English (US)
+        v("en-US-AriaNeural", "Aria (Nữ)", "en-US", "Female", "🇺🇸"),
+        v("en-US-JennyNeural", "Jenny (Nữ)", "en-US", "Female", "🇺🇸"),
+        v("en-US-EmmaNeural", "Emma (Nữ)", "en-US", "Female", "🇺🇸"),
+        v("en-US-GuyNeural", "Guy (Nam)", "en-US", "Male", "🇺🇸"),
+        v("en-US-ChristopherNeural", "Christopher (Nam)", "en-US", "Male", "🇺🇸"),
+        // English (UK)
+        v("en-GB-SoniaNeural", "Sonia (Nữ - Anh)", "en-GB", "Female", "🇬🇧"),
+        v("en-GB-RyanNeural", "Ryan (Nam - Anh)", "en-GB", "Male", "🇬🇧"),
+        // Japanese
+        v("ja-JP-NanamiNeural", "Nanami (Nữ)", "ja-JP", "Female", "🇯🇵"),
+        v("ja-JP-KeitaNeural", "Keita (Nam)", "ja-JP", "Male", "🇯🇵"),
+        // Korean
+        v("ko-KR-SunHiNeural", "SunHi (Nữ)", "ko-KR", "Female", "🇰🇷"),
+        v("ko-KR-InJoonNeural", "InJoon (Nam)", "ko-KR", "Male", "🇰🇷"),
+        // Chinese
+        v("zh-CN-XiaoxiaoNeural", "Xiaoxiao (Nữ)", "zh-CN", "Female", "🇨🇳"),
+        v("zh-CN-YunxiNeural", "Yunxi (Nam)", "zh-CN", "Male", "🇨🇳"),
+        // French
+        v("fr-FR-DeniseNeural", "Denise (Nữ)", "fr-FR", "Female", "🇫🇷"),
+        v("fr-FR-HenriNeural", "Henri (Nam)", "fr-FR", "Male", "🇫🇷"),
+        // Spanish
+        v("es-ES-ElviraNeural", "Elvira (Nữ)", "es-ES", "Female", "🇪🇸"),
+        v("es-ES-AlvaroNeural", "Alvaro (Nam)", "es-ES", "Male", "🇪🇸"),
+        // Russian
+        v("ru-RU-SvetlanaNeural", "Svetlana (Nữ)", "ru-RU", "Female", "🇷🇺"),
+        v("ru-RU-DmitryNeural", "Dmitry (Nam)", "ru-RU", "Male", "🇷🇺"),
+    ]
+}
+
+/// Lệnh: trả về danh sách giọng nói cho UI voice changer.
+#[tauri::command]
+fn list_tts_voices() -> Vec<TtsVoice> {
+    curated_tts_voices()
+}
+
+/// Map a plain language code to a default Edge neural voice.
+fn default_edge_voice_for_lang(lang: &str) -> &'static str {
+    match lang {
+        "vi" => "vi-VN-HoaiMyNeural",
+        "en" => "en-US-AriaNeural",
+        "ja" => "ja-JP-NanamiNeural",
+        "ko" => "ko-KR-SunHiNeural",
+        "zh-CN" | "zh" => "zh-CN-XiaoxiaoNeural",
+        "fr" => "fr-FR-DeniseNeural",
+        "es" => "es-ES-ElviraNeural",
+        "ru" => "ru-RU-SvetlanaNeural",
+        _ => "en-US-AriaNeural",
+    }
+}
+
+/// Synthesize text to speech via Microsoft Edge Neural TTS (blocking).
+/// `pitch` and `rate` are percentages relative to default (e.g. -20..+20 Hz/%).
+fn synthesize_edge_tts(
+    text: &str,
+    voice_name: &str,
+    pitch: i32,
+    rate: i32,
+) -> Result<Vec<u8>, String> {
+    use msedge_tts::tts::{client::connect, SpeechConfig};
+
+    let config = SpeechConfig {
+        voice_name: voice_name.to_string(),
+        // mp3 so the WebView can decode it directly.
+        audio_format: "audio-24khz-48kbitrate-mono-mp3".to_string(),
+        pitch,
+        rate,
+        volume: 0,
+    };
+
+    let mut client = connect().map_err(|e| format!("Không kết nối được dịch vụ giọng nói: {}", e))?;
+    let audio = client
+        .synthesize(text, &config)
+        .map_err(|e| format!("Lỗi tổng hợp giọng nói: {}", e))?;
+
+    if audio.audio_bytes.is_empty() {
+        return Err("Không nhận được dữ liệu âm thanh".to_string());
+    }
+    Ok(audio.audio_bytes)
+}
+
+/// Fetch Google Translate TTS audio (mp3) for a plain language code.
+async fn fetch_google_tts(text: &str, lang: &str) -> Result<Vec<u8>, String> {
+    // Google TTS endpoint limits each request to ~200 chars; split if needed.
+    let client = get_async_http_client();
+    let mut out: Vec<u8> = Vec::new();
+
+    // Simple chunking by characters (keeps it well under the limit).
+    let chars: Vec<char> = text.chars().collect();
+    let mut start = 0usize;
+    while start < chars.len() {
+        let end = std::cmp::min(start + 180, chars.len());
+        let chunk: String = chars[start..end].iter().collect();
+        start = end;
+
+        let q = utf8_percent_encode(chunk.trim(), NON_ALPHANUMERIC).to_string();
+        if q.is_empty() {
+            continue;
+        }
+        let url = format!(
+            "https://translate.google.com/translate_tts?ie=UTF-8&q={}&tl={}&client=tw-ob&total=1&idx=0&textlen={}",
+            q, lang, chunk.chars().count()
+        );
+
+        let resp = client
+            .get(&url)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+            .header("Referer", "https://translate.google.com/")
+            .send()
+            .await
+            .map_err(|e| format!("Lỗi kết nối Google TTS: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("Google TTS lỗi: HTTP {}", resp.status()));
+        }
+        let bytes = resp.bytes().await.map_err(|e| format!("Lỗi đọc audio: {}", e))?;
+        out.extend_from_slice(&bytes);
+    }
+
+    if out.is_empty() {
+        return Err("Không nhận được dữ liệu âm thanh từ Google".to_string());
+    }
+    Ok(out)
+}
+
+fn mp3_to_data_url(bytes: &[u8]) -> String {
+    let b64 = general_purpose::STANDARD.encode(bytes);
+    format!("data:audio/mpeg;base64,{}", b64)
+}
+
+/// Lệnh chính: lấy audio TTS dạng data URL.
+/// `lang` có thể là:
+///   - mã ngôn ngữ ("vi", "en", ...) → dùng Edge neural voice mặc định
+///   - "edge-<VoiceShortName>" hoặc tên giọng đầy đủ ("vi-VN-HoaiMyNeural")
+///   - "google:<lang>" để buộc dùng Google TTS
+/// `pitch`/`rate` (tùy chọn) để đổi giọng (voice changer).
+#[tauri::command]
+async fn get_tts_audio(
+    text: String,
+    lang: String,
+    pitch: Option<i32>,
+    rate: Option<i32>,
+) -> Result<String, String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Không có nội dung để đọc".to_string());
+    }
+
+    let pitch = pitch.unwrap_or(0).clamp(-100, 100);
+    let rate = rate.unwrap_or(0).clamp(-100, 100);
+
+    // Determine the voice / engine.
+    let lang_l = lang.trim();
+
+    // Force Google TTS path.
+    if let Some(g) = lang_l.strip_prefix("google:") {
+        let bytes = fetch_google_tts(&text, g).await?;
+        return Ok(mp3_to_data_url(&bytes));
+    }
+
+    // Resolve an Edge voice name.
+    let voice_name: Option<String> = if let Some(v) = lang_l.strip_prefix("edge-") {
+        Some(v.to_string())
+    } else if lang_l.contains("Neural") {
+        // Full voice short name passed directly.
+        Some(lang_l.to_string())
+    } else if lang_l.len() <= 6 && (lang_l.len() == 2 || lang_l.contains('-')) {
+        // Plain language code → default neural voice.
+        Some(default_edge_voice_for_lang(lang_l).to_string())
+    } else {
+        None
+    };
+
+    if let Some(voice) = voice_name {
+        // Run the blocking synth off the async runtime.
+        let text_c = text.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            synthesize_edge_tts(&text_c, &voice, pitch, rate)
+        })
+        .await
+        .map_err(|e| format!("Lỗi tác vụ TTS: {}", e))?;
+
+        match res {
+            Ok(bytes) => return Ok(mp3_to_data_url(&bytes)),
+            Err(edge_err) => {
+                // Fallback to Google TTS using the locale prefix if Edge fails.
+                let fallback_lang = lang_l.split('-').next().unwrap_or("en");
+                if let Ok(bytes) = fetch_google_tts(&text, fallback_lang).await {
+                    return Ok(mp3_to_data_url(&bytes));
+                }
+                return Err(edge_err);
+            }
+        }
+    }
+
+    // Default: Google TTS with the given language code.
+    let bytes = fetch_google_tts(&text, lang_l).await?;
+    Ok(mp3_to_data_url(&bytes))
+}
+
+/// Lệnh dành riêng cho voice changer: chọn giọng + chỉnh pitch/rate trực tiếp.
+#[tauri::command]
+async fn get_voice_tts_audio(
+    text: String,
+    voice: String,
+    pitch: Option<i32>,
+    rate: Option<i32>,
+) -> Result<String, String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Không có nội dung để đọc".to_string());
+    }
+    let pitch = pitch.unwrap_or(0).clamp(-100, 100);
+    let rate = rate.unwrap_or(0).clamp(-100, 100);
+    let voice_c = voice.clone();
+    let text_c = text.clone();
+
+    let res = tokio::task::spawn_blocking(move || {
+        synthesize_edge_tts(&text_c, &voice_c, pitch, rate)
+    })
+    .await
+    .map_err(|e| format!("Lỗi tác vụ TTS: {}", e))?;
+
+    match res {
+        Ok(bytes) => Ok(mp3_to_data_url(&bytes)),
+        Err(e) => Err(e),
+    }
+}
+
+/// Open the VB-Cable virtual audio device download page so the user can install
+/// a virtual microphone (used to route TTS into voice chat apps).
+#[tauri::command]
+async fn install_virtual_mic() -> Result<String, String> {
+    let url = "https://vb-audio.com/Cable/";
+    #[cfg(target_os = "windows")]
+    {
+        create_silent_command("cmd")
+            .args(["/c", "start", "", url])
+            .spawn()
+            .map_err(|e| format!("Không thể mở trang tải driver: {}", e))?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = url;
+    }
+    Ok("Đã mở trang tải driver Microphone ảo (VB-Cable). Vui lòng cài đặt rồi khởi động lại máy.".to_string())
+}
+
+
+//  window. The frontend renders the chrome (tabs/address bar) and positions one
+//  child webview per tab over a viewport region. The main window is opaque
+//  (transparent:false) so the child webview composites/paints correctly on
+//  Windows. Renders ANY site (Google, YouTube, ...) like a real browser.
+// ============================================================================
+
+fn browser_label(tab_id: &str) -> String {
+    format!("htssbrowser-{}", tab_id)
+}
+
+fn parse_browser_url(input: &str) -> Url {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Url::parse("https://www.google.com").unwrap();
+    }
+    if let Ok(u) = Url::parse(trimmed) {
+        if u.scheme() == "http" || u.scheme() == "https" {
+            return u;
+        }
+    }
+    // Looks like a domain? else treat as a Google search.
+    let looks_like_domain = trimmed.contains('.') && !trimmed.contains(' ');
+    if looks_like_domain {
+        if let Ok(u) = Url::parse(&format!("https://{}", trimmed)) {
+            return u;
+        }
+    }
+    let q = utf8_percent_encode(trimmed, NON_ALPHANUMERIC).to_string();
+    Url::parse(&format!("https://www.google.com/search?q={}", q)).unwrap()
+}
+
+/// Create the embedded browser child webview for `tab_id` at the given bounds.
+#[tauri::command]
+async fn browser_create(
+    app: tauri::AppHandle,
+    tab_id: String,
+    url: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    use tauri::{Manager, WebviewBuilder, WebviewUrl, LogicalPosition, LogicalSize};
+
+    let label = browser_label(&tab_id);
+
+    // Already exists? show + reposition.
+    if let Some(existing) = app.get_webview(&label) {
+        let _ = existing.show();
+        let _ = existing.set_bounds(tauri::Rect {
+            position: LogicalPosition::new(x, y).into(),
+            size: LogicalSize::new(width.max(1.0), height.max(1.0)).into(),
+        });
+        return Ok(());
+    }
+
+    let window = app
+        .get_window("main")
+        .ok_or_else(|| "Không tìm thấy cửa sổ chính".to_string())?;
+
+    let target = parse_browser_url(&url);
+    let tab_for_load = tab_id.clone();
+    let tab_for_title = tab_id.clone();
+
+    let builder = WebviewBuilder::new(&label, WebviewUrl::External(target))
+        .on_page_load(move |webview, payload| {
+            use tauri::Emitter;
+            let phase = match payload.event() {
+                tauri::webview::PageLoadEvent::Started => "started",
+                tauri::webview::PageLoadEvent::Finished => "finished",
+            };
+            let _ = webview.emit(
+                "browser-nav",
+                serde_json::json!({
+                    "tabId": tab_for_load,
+                    "url": payload.url().to_string(),
+                    "phase": phase,
+                }),
+            );
+        })
+        .on_document_title_changed(move |webview, title| {
+            use tauri::Emitter;
+            let _ = webview.emit(
+                "browser-title",
+                serde_json::json!({ "tabId": tab_for_title, "title": title }),
+            );
+        });
+
+    window
+        .add_child(
+            builder,
+            LogicalPosition::new(x, y),
+            LogicalSize::new(width.max(1.0), height.max(1.0)),
+        )
+        .map_err(|e| format!("Không thể tạo trình duyệt: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn browser_navigate(app: tauri::AppHandle, tab_id: String, url: String) -> Result<(), String> {
+    use tauri::Manager;
+    let label = browser_label(&tab_id);
+    for _ in 0..40 {
+        if let Some(webview) = app.get_webview(&label) {
+            let target = parse_browser_url(&url);
+            return webview.navigate(target).map_err(|e| e.to_string());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    Err("Trình duyệt chưa được khởi tạo".to_string())
+}
+
+#[tauri::command]
+async fn browser_back(app: tauri::AppHandle, tab_id: String) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(webview) = app.get_webview(&browser_label(&tab_id)) {
+        let _ = webview.eval("window.history.back();");
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn browser_forward(app: tauri::AppHandle, tab_id: String) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(webview) = app.get_webview(&browser_label(&tab_id)) {
+        let _ = webview.eval("window.history.forward();");
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn browser_reload(app: tauri::AppHandle, tab_id: String) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(webview) = app.get_webview(&browser_label(&tab_id)) {
+        webview.reload().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn browser_set_bounds(
+    app: tauri::AppHandle,
+    tab_id: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    use tauri::{Manager, LogicalPosition, LogicalSize};
+    if let Some(webview) = app.get_webview(&browser_label(&tab_id)) {
+        webview
+            .set_bounds(tauri::Rect {
+                position: LogicalPosition::new(x, y).into(),
+                size: LogicalSize::new(width.max(1.0), height.max(1.0)).into(),
+            })
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn browser_show(app: tauri::AppHandle, tab_id: String) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(webview) = app.get_webview(&browser_label(&tab_id)) {
+        webview.show().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn browser_hide(app: tauri::AppHandle, tab_id: String) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(webview) = app.get_webview(&browser_label(&tab_id)) {
+        webview.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn browser_close(app: tauri::AppHandle, tab_id: String) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(webview) = app.get_webview(&browser_label(&tab_id)) {
+        webview.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Hide every embedded browser webview (used when leaving the Browser tab).
+#[tauri::command]
+async fn browser_hide_all(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    for (label, webview) in app.webviews() {
+        if label.starts_with("htssbrowser-") {
+            let _ = webview.hide();
+        }
+    }
+    Ok(())
+}
+
+/// Close every embedded browser webview (used on unmount).
+#[tauri::command]
+async fn browser_close_all(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    for (label, webview) in app.webviews() {
+        if label.starts_with("htssbrowser-") {
+            let _ = webview.close();
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn open_in_browser(url: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -2342,11 +4485,138 @@ async fn open_in_browser(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Inline splash HTML shown by a native window the instant the app launches,
+/// independent of the web app / dev server so there is never a transparent
+/// empty frame while the UI compiles or loads.
+const SPLASH_HTML: &str = r##"<!doctype html>
+<html><head><meta charset="utf-8"/>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:transparent;}
+  .card{
+    position:fixed;inset:0;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    font-family:'Segoe UI Variable','Segoe UI',system-ui,sans-serif;user-select:none;
+    border-radius:16px;overflow:hidden;
+    background:
+      radial-gradient(90% 70% at 50% 0%, rgba(34,211,238,.10) 0%, transparent 55%),
+      radial-gradient(80% 80% at 80% 100%, rgba(59,130,246,.10) 0%, transparent 60%),
+      linear-gradient(160deg,#0b0b12 0%,#070710 55%,#040409 100%);
+    border:1px solid rgba(255,255,255,.07);
+  }
+  /* subtle moving sheen across the whole card */
+  .card::after{
+    content:"";position:absolute;top:0;left:-60%;width:55%;height:100%;
+    background:linear-gradient(100deg,transparent,rgba(255,255,255,.045),transparent);
+    transform:skewX(-18deg);animation:sheen 3.4s ease-in-out infinite;
+  }
+  .top-bar{position:absolute;top:0;left:0;right:0;height:2px;overflow:hidden;}
+  .top-bar i{position:absolute;inset:0;width:40%;border-radius:2px;
+    background:linear-gradient(90deg,#22d3ee,#3b82f6,#8b5cf6);animation:slide 1.5s ease-in-out infinite;}
+  .logo{position:relative;width:92px;height:92px;display:flex;align-items:center;justify-content:center;margin-bottom:26px;}
+  .ring{position:absolute;inset:0;border-radius:50%;}
+  .ring.track{border:2px solid rgba(255,255,255,.05);}
+  .ring.spin{border:2px solid transparent;border-top-color:#22d3ee;border-right-color:#3b82f6;animation:rot 1s linear infinite;
+    filter:drop-shadow(0 0 6px rgba(34,211,238,.4));}
+  .badge{position:relative;width:60px;height:60px;border-radius:18px;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(150deg,rgba(34,211,238,.16),rgba(59,130,246,.06));
+    border:1px solid rgba(34,211,238,.25);box-shadow:0 0 24px rgba(34,211,238,.18),inset 0 0 14px rgba(34,211,238,.06);
+    animation:pulse 2.6s ease-in-out infinite;}
+  .badge svg{width:32px;height:32px;}
+  .name{display:flex;align-items:baseline;font-weight:800;font-size:25px;letter-spacing:-.02em;}
+  .name .a{color:#f3f5f8;}
+  .name .b{background:linear-gradient(90deg,#22d3ee,#60a5fa);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .tag{margin-top:7px;color:#7c8696;font-size:10px;font-weight:700;letter-spacing:.42em;text-transform:uppercase;padding-left:.42em;}
+  .dots{display:flex;gap:7px;margin-top:30px;}
+  .dots i{width:7px;height:7px;border-radius:50%;background:#1f2733;animation:blink 1.4s ease-in-out infinite;}
+  .dots i:nth-child(2){animation-delay:.2s;}
+  .dots i:nth-child(3){animation-delay:.4s;}
+  .ver{position:absolute;bottom:14px;left:0;right:0;text-align:center;color:#3a4252;font-size:9px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;}
+  @keyframes rot{to{transform:rotate(360deg);}}
+  @keyframes pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.05);}}
+  @keyframes blink{0%,100%{background:#1f2733;transform:scale(1);}50%{background:#22d3ee;transform:scale(1.25);}}
+  @keyframes slide{0%{left:-40%;}100%{left:100%;}}
+  @keyframes sheen{0%{left:-60%;}55%,100%{left:130%;}}
+</style></head>
+<body>
+  <div class="card">
+    <div class="top-bar"><i></i></div>
+    <div class="logo">
+      <div class="ring track"></div>
+      <div class="ring spin"></div>
+      <div class="badge">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 1.6l2.7 7.1 7.3 .3-5.7 4.6 2 7.1L12 17.9 5.4 22.8l2-7.1L1.7 9l7.3-.3L12 1.6z" fill="url(#g)"/>
+          <defs><linearGradient id="g" x1="2" y1="2" x2="22" y2="22"><stop stop-color="#22d3ee"/><stop offset="1" stop-color="#3b82f6"/></linearGradient></defs>
+        </svg>
+      </div>
+    </div>
+    <div class="name"><span class="a">htss</span><span class="b">.club</span></div>
+    <div class="tag">Launcher</div>
+    <div class="dots"><i></i><i></i><i></i></div>
+    <div class="ver">Đang khởi động</div>
+  </div>
+</body></html>"##;
+
+/// Reveal the main window and close the splash. Called by the frontend once the
+/// app UI has mounted.
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    if let Some(splash) = app.get_webview_window("splash") {
+        let _ = splash.close();
+    }
+}
+
+/// Đóng ứng dụng. Dùng cho nút đóng tùy chỉnh trên thanh tiêu đề.
+/// Ẩn cửa sổ ngay để phản hồi tức thì, đóng cửa sổ trình duyệt phụ (nếu mở),
+/// rồi nhường cho event loop huỷ webview xong mới thoát tiến trình. Việc chờ
+/// ngắn này tránh lỗi "Failed to unregister class Chrome_WidgetWin_0".
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    use tauri::Manager;
+
+    // Đóng cửa sổ chính ngay để người dùng thấy app đóng tức thì.
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.hide();
+    }
+
+    // Đóng các child webview của trình duyệt nhúng (gửi lệnh huỷ vào event loop).
+    for (label, webview) in app.webviews() {
+        if label.starts_with("htssbrowser-") {
+            let _ = webview.close();
+        }
+    }
+
+    // Thoát sau một khoảng ngắn từ luồng riêng, để event loop kịp xử lý việc
+    // huỷ cửa sổ con WebView2 trước khi tiến trình kết thúc.
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        app.cleanup_before_exit();
+        std::process::exit(0);
+    });
+}
+
 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    // Instant splash served entirely from Rust (no dev server needed), so it
+    // paints the moment the splash window is created — before the heavy web
+    // app/dev-server compile finishes.
+    .register_uri_scheme_protocol("splash", |_app, _request| {
+        let html = SPLASH_HTML.as_bytes().to_vec();
+        Response::builder()
+            .status(200)
+            .header("Content-Type", "text/html; charset=utf-8")
+            .body(html)
+            .unwrap()
+    })
     .register_asynchronous_uri_scheme_protocol("vstream", move |_app, request, responder| {
         let uri = request.uri();
         let query = uri.query().unwrap_or("").to_string();
@@ -2488,6 +4758,166 @@ pub fn run() {
             }
         });
     })
+    .register_asynchronous_uri_scheme_protocol("proxy", move |_app, request, responder| {
+        let uri = request.uri();
+        let query = uri.query().unwrap_or("").to_string();
+        let path = uri.path().to_string();
+        let referer_header = request.headers().get("referer")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        tauri::async_runtime::spawn(async move {
+            // Parse ?url= from query
+            let mut target_url_opt = None;
+            for pair in query.split('&') {
+                let mut parts = pair.splitn(2, '=');
+                if let (Some(key), Some(val)) = (parts.next(), parts.next()) {
+                    if key == "url" {
+                        if let Ok(decoded) = percent_decode_str(val).decode_utf8() {
+                            target_url_opt = Some(decoded.into_owned());
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // If no ?url= param, try to resolve from referer + path
+            let target_url = if let Some(u) = target_url_opt {
+                u
+            } else if let Some(ref referer) = referer_header {
+                // Extract base URL from referer: proxy://localhost/?url=https://example.com/...
+                let base_from_referer = {
+                    let mut base = None;
+                    for pair in referer.split('?').nth(1).unwrap_or("").split('&') {
+                        let mut parts = pair.splitn(2, '=');
+                        if let (Some(key), Some(val)) = (parts.next(), parts.next()) {
+                            if key == "url" {
+                                if let Ok(decoded) = percent_decode_str(val).decode_utf8() {
+                                    base = Some(decoded.into_owned());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    base
+                };
+                if let Some(base_url_str) = base_from_referer {
+                    if let Ok(base_url) = Url::parse(&base_url_str) {
+                        if let Ok(resolved) = base_url.join(&path) {
+                            resolved.to_string()
+                        } else {
+                            let resp = Response::builder().status(400).body(b"Bad request".to_vec()).unwrap();
+                            responder.respond(resp);
+                            return;
+                        }
+                    } else {
+                        let resp = Response::builder().status(400).body(b"Bad referer".to_vec()).unwrap();
+                        responder.respond(resp);
+                        return;
+                    }
+                } else {
+                    let resp = Response::builder().status(400).body(b"Missing URL".to_vec()).unwrap();
+                    responder.respond(resp);
+                    return;
+                }
+            } else {
+                let resp = Response::builder().status(400).body(b"Missing URL".to_vec()).unwrap();
+                responder.respond(resp);
+                return;
+            };
+
+            let client = get_async_http_client();
+            let response = match client.get(&target_url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+                .header("Accept-Language", "vi,en-US;q=0.9,en;q=0.8")
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    let body = format!("<html><body style='background:#111;color:#f87171;font-family:sans-serif;padding:2rem'><h2>Lỗi kết nối</h2><p>{}</p></body></html>", e);
+                    let resp = Response::builder().status(502)
+                        .header("Content-Type", "text/html; charset=utf-8")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(body.into_bytes())
+                        .unwrap();
+                    responder.respond(resp);
+                    return;
+                }
+            };
+
+            let status = response.status().as_u16();
+            let content_type = response.headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+
+            // For HTML content, inject navigation script
+            if content_type.contains("text/html") {
+                let html = response.text().await.unwrap_or_default();
+                let encoded_target = utf8_percent_encode(&target_url, NON_ALPHANUMERIC).to_string();
+                let inject_script = format!(r#"<script>
+(function() {{
+  var BASE_URL = decodeURIComponent("{encoded_target}");
+  function toProxy(url) {{
+    try {{
+      var abs = new URL(url, BASE_URL).href;
+      return 'http://proxy.localhost/?url=' + encodeURIComponent(abs);
+    }} catch(e) {{ return url; }}
+  }}
+  document.addEventListener('click', function(e) {{
+    var el = e.target.closest('a');
+    if (!el) return;
+    var href = el.getAttribute('href');
+    if (!href || href.startsWith('#') || href.startsWith('javascript')) return;
+    e.preventDefault();
+    var proxied = toProxy(href);
+    window.parent.postMessage({{ type: 'proxy-navigate', url: proxied, originalUrl: new URL(href, BASE_URL).href }}, '*');
+    window.location.href = proxied;
+  }}, true);
+  document.addEventListener('submit', function(e) {{
+    var form = e.target;
+    if (form.method && form.method.toLowerCase() === 'get') {{
+      e.preventDefault();
+      var action = form.getAttribute('action') || BASE_URL;
+      var params = new URLSearchParams(new FormData(form));
+      var fullUrl = new URL(action, BASE_URL).href + '?' + params.toString();
+      var proxied = toProxy(fullUrl);
+      window.parent.postMessage({{ type: 'proxy-navigate', url: proxied, originalUrl: fullUrl }}, '*');
+      window.location.href = proxied;
+    }}
+  }}, true);
+  window.addEventListener('load', function() {{
+    window.parent.postMessage({{ type: 'proxy-navigated', url: BASE_URL }}, '*');
+  }});
+}})();
+</script>"#);
+                let final_html = if let Some(head_end) = html.find("</head>") {
+                    format!("{}{}{}", &html[..head_end], inject_script, &html[head_end..])
+                } else {
+                    format!("{}{}", inject_script, html)
+                };
+                let resp = Response::builder()
+                    .status(status)
+                    .header("Content-Type", "text/html; charset=utf-8")
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(final_html.into_bytes())
+                    .unwrap();
+                responder.respond(resp);
+            } else {
+                let bytes = response.bytes().await.unwrap_or_default().to_vec();
+                let resp = Response::builder()
+                    .status(status)
+                    .header("Content-Type", &content_type)
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(bytes)
+                    .unwrap();
+                responder.respond(resp);
+            }
+        });
+    })
     .invoke_handler(tauri::generate_handler![
         create_pip_window,
         get_riot_credentials, 
@@ -2511,12 +4941,22 @@ pub fn run() {
         save_direct_rpc_config,
         get_direct_rpc_config,
         add_valorant_account_credentials,
+        add_valorant_account_browser,
         add_valorant_account_client,
         get_valorant_accounts,
         delete_valorant_account,
         set_active_valorant_account,
         get_active_valorant_account,
+        get_active_credentials,
+        refresh_valorant_account,
         logout_riot_client_keep_session,
+        get_steam_accounts,
+        get_steam_avatar,
+        get_active_steam_account,
+        switch_steam_account,
+        remove_steam_account,
+        launch_steam,
+        add_steam_account,
         check_for_updates,
         download_and_install_update,
         fetch_short_reels_index,
@@ -2527,7 +4967,24 @@ pub fn run() {
         fetch_steam_sales,
         fetch_steam_game_details,
         fetch_epic_games,
-        open_in_browser
+        get_tts_audio,
+        get_voice_tts_audio,
+        list_tts_voices,
+        install_virtual_mic,
+        open_in_browser,
+        quit_app,
+        show_main_window,
+        browser_create,
+        browser_navigate,
+        browser_back,
+        browser_forward,
+        browser_reload,
+        browser_set_bounds,
+        browser_show,
+        browser_hide,
+        browser_close,
+        browser_hide_all,
+        browser_close_all
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -2537,6 +4994,73 @@ pub fn run() {
             .build(),
         )?;
       }
+
+      use tauri::Manager;
+
+      // Create the native splash window immediately. It loads inline HTML via
+      // the custom `splash://` scheme, so it appears instantly while the main
+      // web UI compiles/loads. The main window stays hidden (visible:false in
+      // config) until the frontend calls `show_main_window`.
+      let _ = tauri::WebviewWindowBuilder::new(
+        app,
+        "splash",
+        tauri::WebviewUrl::CustomProtocol("splash://localhost/".parse().unwrap()),
+      )
+      .title("HTSS Club")
+      .inner_size(440.0, 360.0)
+      .decorations(false)
+      .transparent(true)
+      .resizable(false)
+      .center()
+      .skip_taskbar(true)
+      .shadow(false)
+      .build();
+
+      // Safety net: if the frontend never signals ready (e.g. a load error),
+      // reveal the main window anyway after a timeout so the app isn't stuck
+      // on the splash.
+      let handle_ready = app.handle().clone();
+      std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(20));
+        if let Some(main) = handle_ready.get_webview_window("main") {
+          if !main.is_visible().unwrap_or(true) {
+            let _ = main.show();
+            let _ = main.set_focus();
+            if let Some(splash) = handle_ready.get_webview_window("splash") {
+              let _ = splash.close();
+            }
+          }
+        }
+      });
+
+      // Graceful shutdown when the OS / Alt+F4 closes the window: intercept the
+      // close, tear down the embedded browser child webviews, then exit after a
+      // short delay so WebView2 can destroy its child windows first. Exiting
+      // while those still exist causes the
+      // "Failed to unregister class Chrome_WidgetWin_0" error.
+      if let Some(main) = app.get_webview_window("main") {
+        let handle = app.handle().clone();
+        main.on_window_event(move |event| {
+          if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            if let Some(win) = handle.get_webview_window("main") {
+              let _ = win.hide();
+            }
+            for (label, webview) in handle.webviews() {
+              if label.starts_with("htssbrowser-") {
+                let _ = webview.close();
+              }
+            }
+            let h = handle.clone();
+            std::thread::spawn(move || {
+              std::thread::sleep(std::time::Duration::from_millis(120));
+              h.cleanup_before_exit();
+              std::process::exit(0);
+            });
+          }
+        });
+      }
+
       Ok(())
     })
     .build(tauri::generate_context!())

@@ -1,4 +1,4 @@
-const fs = require('fs');
+                                              const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
@@ -50,14 +50,15 @@ try {
 }
 
 // 5. Tiến hành tạo và đăng tải tệp lên GitHub Releases
+const tempNotesPath = path.join(__dirname, '../temp_notes.md');
 try {
   console.log(`\n📦 Đang tiến hành đẩy bộ cài đặt lên GitHub Releases...`);
   
-  // Escaping dấu ngoặc kép trong releaseNotes
-  const escapedNotes = releaseNotes.replace(/"/g, '\\"');
+  // Ghi nhật ký vào file tạm để tránh lỗi xuống dòng hoặc ký tự đặc biệt trên CLI
+  fs.writeFileSync(tempNotesPath, releaseNotes, 'utf8');
   
   // Câu lệnh tạo và upload tệp bằng GitHub CLI
-  const command = `gh release create ${tagName} "${installerPath}" --title "HTSS Launcher ${tagName}" --notes "${escapedNotes}"`;
+  const command = `gh release create ${tagName} "${installerPath}" --title "HTSS Launcher ${tagName}" --notes-file "${tempNotesPath}"`;
   
   execSync(command, { stdio: 'inherit' });
   
@@ -67,4 +68,10 @@ try {
   console.log(`👉 Tất cả người dùng của bạn hiện tại đã có thể cập nhật lên phiên bản ${tagName}!`);
 } catch (error) {
   console.error(`\n❌ Thất bại khi đẩy lên GitHub Releases. Vui lòng kiểm tra xem bạn đã đăng nhập tài khoản GitHub bằng 'gh auth login' chưa.`);
+} finally {
+  if (fs.existsSync(tempNotesPath)) {
+    try {
+      fs.unlinkSync(tempNotesPath);
+    } catch (e) {}
+  }
 }

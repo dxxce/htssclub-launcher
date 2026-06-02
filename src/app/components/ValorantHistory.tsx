@@ -86,7 +86,7 @@ export default function ValorantHistory() {
       setLoading(true);
       setError(null);
 
-      const creds = await invoke<any>("get_riot_credentials");
+      const creds = await invoke<any>("get_active_credentials");
       const historyData = await invoke<any[]>("fetch_valorant_match_history", {
         req: {
           puuid: creds.puuid,

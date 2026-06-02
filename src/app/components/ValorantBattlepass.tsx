@@ -39,7 +39,7 @@ export default function ValorantBattlepass() {
       setLoading(true);
       setError(null);
 
-      const creds = await invoke<any>("get_riot_credentials");
+      const creds = await invoke<any>("get_active_credentials");
       const contractsData = await invoke<any>("fetch_valorant_contracts", {
         req: {
           puuid: creds.puuid,

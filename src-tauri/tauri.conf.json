@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "htssclub",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "identifier": "com.htssclub.app",
   "build": {
     "frontendDist": "../out",
@@ -20,12 +20,14 @@
         "resizable": true,
         "decorations": false,
         "fullscreen": false,
-        "transparent": true,
-        "center": true
+        "transparent": false,
+        "center": true,
+        "visible": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "dangerousDisableAssetCspModification": true
     }
   },
   "bundle": {

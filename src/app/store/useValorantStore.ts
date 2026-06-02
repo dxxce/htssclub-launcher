@@ -23,6 +23,9 @@ interface ValorantStoreState {
   setActiveAccount: (puuid: string) => Promise<void>;
   deleteAccount: (puuid: string) => Promise<void>;
   addClientAccount: () => Promise<void>;
+  addCredentialsAccount: (username: string, password: string, shard: string) => Promise<void>;
+  addBrowserAccount: (shard: string) => Promise<void>;
+  refreshAccount: (puuid: string) => Promise<void>;
   logoutClientKeepSession: () => Promise<void>;
 }
 
@@ -75,6 +78,21 @@ export const useValorantStore = create<ValorantStoreState>((set, get) => ({
 
   addClientAccount: async () => {
     await invoke<SavedRiotAccount>("add_valorant_account_client");
+    await get().loadAccounts();
+  },
+
+  addCredentialsAccount: async (username, password, shard) => {
+    await invoke<SavedRiotAccount>("add_valorant_account_credentials", { username, password, shard });
+    await get().loadAccounts();
+  },
+
+  addBrowserAccount: async (shard) => {
+    await invoke<SavedRiotAccount>("add_valorant_account_browser", { shard });
+    await get().loadAccounts();
+  },
+
+  refreshAccount: async (puuid) => {
+    await invoke<SavedRiotAccount>("refresh_valorant_account", { puuid });
     await get().loadAccounts();
   },
 

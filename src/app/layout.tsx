@@ -35,9 +35,9 @@ export default function RootLayout({
       lang="en"
       className={`${quicksand.variable} h-full antialiased`}
     >
-      <body className="h-full flex bg-[#030305] text-white overflow-hidden selection:bg-purple-500/30 font-sans">
+      <body className="h-full flex bg-[#06060d] text-white overflow-hidden selection:bg-violet-500/30 font-sans">
         <main 
-          className="flex-1 h-full w-full relative bg-[#030305] overflow-hidden"
+          className="flex-1 h-full w-full relative bg-[#06060d] overflow-hidden"
         >
           {children}
         </main>

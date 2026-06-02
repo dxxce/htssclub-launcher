@@ -470,7 +470,7 @@ export default function CombinedDeals() {
   });
 
   return (
-    <div className="flex flex-col gap-5 w-full h-full animate-fade-in relative z-10 text-neutral-200">
+    <div className="flex-1 min-h-0 flex flex-col gap-5 w-full animate-fade-in relative z-10 text-neutral-200">
       
       {/* Search & Platform Toggles (Styled like DiscordHub) */}
       <div className="flex flex-col gap-3 select-none">

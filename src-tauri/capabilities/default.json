@@ -4,12 +4,17 @@
   "description": "enables the default permissions",
   "windows": [
     "main",
-    "htss-pip-window"
+    "htss-pip-window",
+    "splash",
+    "htss-browser",
+    "riot-login"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
     "core:window:allow-close",
+    "core:window:allow-show",
+    "core:window:allow-hide",
     "core:window:allow-toggle-maximize",
     "core:window:allow-minimize",
     "core:window:allow-set-fullscreen",

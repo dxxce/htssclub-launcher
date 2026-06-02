@@ -113,7 +113,8 @@ export default function DiscordHub({ reloadKey }: { reloadKey?: number }) {
       const result = await invoke<string>("install_equicord");
       addLog("success", result);
       setInstallStatus("success");
-      setEquicordInstalled(true);
+      // Xác nhận lại trạng thái thực tế thay vì giả định đã cài
+      await checkEquicordInstalled();
       setTimeout(() => checkQuestifyStatus(), 500);
     } catch (e) {
       addLog("error", `Cài đặt thất bại: ${e}`);
@@ -302,7 +303,7 @@ export default function DiscordHub({ reloadKey }: { reloadKey?: number }) {
 
               <div className="text-[11px] text-neutral-600 flex items-start gap-1.5 px-1">
                 <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                <span>Sẽ tự động tải và kích hoạt Equicord vào Discord của bạn. Hãy đóng Discord trước.</span>
+                <span>Sẽ tự động tải và cài đặt Equicord vào Discord của bạn. Hãy đóng Discord trước.</span>
               </div>
 
               <button

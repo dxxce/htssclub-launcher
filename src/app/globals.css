@@ -1,71 +1,230 @@
 @import "tailwindcss";
 
+/* ============================================================================
+   HTSS — "Aurora Glass" design system
+   ========================================================================== */
+
 :root {
   color-scheme: dark;
-  --background: #0a0a0f;
-  --foreground: #ffffff;
+
+  /* Base surfaces */
+  --bg-0: #06060d;        /* app background */
+  --bg-1: #12121f;        /* raised panels */
+  --bg-2: #181828;        /* cards */
+  --bg-3: #20203a;        /* hover */
+
+  /* Hairline borders */
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.12);
+
+  /* Text */
+  --text-hi: #f4f4fb;
+  --text-mid: #b9b9c9;
+  --text-lo: #71718a;
+
+  /* Accent gradient (indigo → violet → fuchsia) + cyan */
+  --acc-1: #6366f1;       /* indigo */
+  --acc-2: #8b5cf6;       /* violet */
+  --acc-3: #d946ef;       /* fuchsia */
+  --acc-cyan: #22d3ee;
+
+  --foreground: var(--text-hi);
+  --background: var(--bg-0);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--bg-0);
+  --color-foreground: var(--text-hi);
   --font-sans: var(--font-quicksand), ui-sans-serif, system-ui, sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  background: var(--bg-0);
+  color: var(--text-hi);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-}
-
-@keyframes shimmer {
-  100% {
-    transform: translateX(400%);
-  }
-}
-
-/* Hide scrollbars universally for a premium, clean native application look */
-::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
-}
+/* ─── Scrollbars: hidden by default (clean native look) ───────────────────── */
+::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
 html, body, *, .custom-scrollbar {
   -ms-overflow-style: none !important;
   scrollbar-width: none !important;
 }
+.no-scrollbar::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+.no-scrollbar { -ms-overflow-style: none !important; scrollbar-width: none !important; }
 
-/* 
- * FORCE ARTPLAYER DIMENSIONS 
- * This prevents the video from shrinking to the top left corner after switchUrl
- * in the production build where dynamic injected CSS/Tailwind arbitrary variants 
- * might be purged or overridden.
- */
-.art-video-player, 
+/* ─── Artplayer dimension guard (unchanged behavior) ──────────────────────── */
+.art-video-player,
 .art-video-player video,
 .art-video-player .art-video {
   width: 100% !important;
   height: 100% !important;
   object-fit: contain !important;
 }
+video::-webkit-media-text-track-container { display: none !important; }
 
-video::-webkit-media-text-track-container { 
-  display: none !important; 
+/* ============================================================================
+   Backgrounds & patterns
+   ========================================================================== */
+.bg-dot-pattern {
+  background-size: 28px 28px;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+}
+.bg-grid-pattern {
+  background-size: 44px 44px;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
 }
 
-/* Hide scrollbar utility */
-.no-scrollbar::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
+/* Aurora ambient blobs */
+.aurora-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(120px);
+  pointer-events: none;
+  opacity: 0.5;
 }
-.no-scrollbar {
-  -ms-overflow-style: none !important;
-  scrollbar-width: none !important;
+
+/* ============================================================================
+   Surfaces (solid / flat — no glass blur)
+   ========================================================================== */
+.glass {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
 }
+.glass-soft {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+/* Gradient text */
+.text-grad {
+  background: linear-gradient(90deg, var(--acc-cyan), var(--acc-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Gradient hairline (top accent on panels) */
+.grad-hairline {
+  background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.5), transparent);
+}
+
+/* Subtle inner highlight on raised cards (replaces glass border glow) */
+.card-glow {
+  position: relative;
+  isolation: isolate;
+}
+.card-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.08), transparent 60%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Sheen sweep on hover (kept, lightweight) */
+.glass-shine { position: relative; overflow: hidden; }
+.glass-shine::after {
+  content: '';
+  position: absolute;
+  top: -50%; left: -60%;
+  width: 35%; height: 200%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  transform: rotate(25deg);
+  transition: transform 0.7s ease;
+  pointer-events: none;
+  z-index: 4;
+}
+.glass-shine:hover::after { transform: translate(360%, 0) rotate(25deg); }
+
+/* ============================================================================
+   Animations
+   ========================================================================== */
+@keyframes shimmer { 100% { transform: translateX(400%); } }
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50% { transform: translateY(-10px) scale(1.04); }
+}
+.animate-float { animation: float 9s ease-in-out infinite; }
+
+@keyframes float-reverse {
+  0%, 100% { transform: translateY(0px) scale(1.04); }
+  50% { transform: translateY(10px) scale(1); }
+}
+.animate-float-reverse { animation: float-reverse 11s ease-in-out infinite; }
+
+@keyframes aurora-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(4%, -3%) scale(1.08); }
+  66% { transform: translate(-3%, 4%) scale(0.96); }
+}
+.animate-aurora { animation: aurora-drift 18s ease-in-out infinite; }
+
+@keyframes shimmer-flow {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.animate-shimmer-flow {
+  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.18) 50%, rgba(255,255,255,0) 100%);
+  background-size: 200% 100%;
+  animation: shimmer-flow 2.4s infinite linear;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.42; transform: scale(1); }
+  50% { opacity: 0.72; transform: scale(1.06); }
+}
+.animate-pulse-glow { animation: pulse-glow 6s ease-in-out infinite; }
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-in { animation: fade-in 0.25s ease-out both; }
+
+@keyframes pop-in {
+  0% { opacity: 0; transform: translateY(8px) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-pop-in { animation: pop-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes slide-up {
+  0% { opacity: 0; transform: translateY(14px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-up { animation: slide-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* Stagger helper for grids */
+.stagger > * { animation: pop-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.stagger > *:nth-child(1) { animation-delay: 0.02s; }
+.stagger > *:nth-child(2) { animation-delay: 0.06s; }
+.stagger > *:nth-child(3) { animation-delay: 0.10s; }
+.stagger > *:nth-child(4) { animation-delay: 0.14s; }
+.stagger > *:nth-child(5) { animation-delay: 0.18s; }
+.stagger > *:nth-child(6) { animation-delay: 0.22s; }
+.stagger > *:nth-child(7) { animation-delay: 0.26s; }
+.stagger > *:nth-child(8) { animation-delay: 0.30s; }
+
+/* Styled native select */
+.htss-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371718a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 34px;
+}
+.htss-select option { background: #11111f; color: #f4f4fb; }
