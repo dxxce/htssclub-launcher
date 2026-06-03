@@ -7,6 +7,7 @@ import {
   Power, RefreshCw, Terminal, Shield, Zap, Info, Activity, Sliders
 } from "lucide-react";
 import DiscordRpcHub from "./DiscordRpcHub";
+import { toast } from "./Toast";
 
 type InstallStatus = "idle" | "loading" | "success" | "error";
 type QuestifyStatus = "unknown" | "loading" | "enabled" | "disabled" | "error";
@@ -110,7 +111,11 @@ export default function DiscordHub({ reloadKey }: { reloadKey?: number }) {
     addLog("info", "Đang tải installer từ GitHub...");
 
     try {
-      const result = await invoke<string>("install_equicord");
+      const result = await toast.promise(invoke<string>("install_equicord"), {
+        loading: "Đang cài đặt Equicord...",
+        success: "Cài đặt Equicord thành công!",
+        error: (e) => "Cài đặt thất bại: " + e.toString(),
+      });
       addLog("success", result);
       setInstallStatus("success");
       // Xác nhận lại trạng thái thực tế thay vì giả định đã cài
@@ -129,7 +134,11 @@ export default function DiscordHub({ reloadKey }: { reloadKey?: number }) {
     addLog("info", targetState ? "Đang bật plugin Questify..." : "Đang tắt plugin Questify...");
 
     try {
-      await invoke("toggle_questify_plugin", { enable: targetState });
+      await toast.promise(invoke("toggle_questify_plugin", { enable: targetState }), {
+        loading: targetState ? "Đang bật Questify..." : "Đang tắt Questify...",
+        success: targetState ? "Đã bật Questify. Khởi động lại Discord để áp dụng." : "Đã tắt Questify. Khởi động lại Discord để áp dụng.",
+        error: (e) => "Lỗi toggle Questify: " + e.toString(),
+      });
       setQuestifyStatus(targetState ? "enabled" : "disabled");
       addLog("success", targetState
         ? "Questify đã được BẬT. Khởi động lại Discord để áp dụng."
@@ -146,9 +155,11 @@ export default function DiscordHub({ reloadKey }: { reloadKey?: number }) {
     try {
       await invoke("kill_discord");
       addLog("success", "Discord đã được đóng.");
+      toast.success("Đã đóng Discord.");
       setDiscordStatus("not_running");
     } catch (e) {
       addLog("error", `Lỗi đóng Discord: ${e}`);
+      toast.error("Lỗi đóng Discord: " + e);
     }
   };
 
@@ -157,9 +168,11 @@ export default function DiscordHub({ reloadKey }: { reloadKey?: number }) {
     try {
       await invoke("launch_discord");
       addLog("success", "Discord đang được khởi động...");
+      toast.info("Discord đang khởi động...");
       setTimeout(() => checkDiscordStatus(), 3000);
     } catch (e) {
       addLog("error", `Lỗi khởi động Discord: ${e}`);
+      toast.error("Lỗi khởi động Discord: " + e);
     }
   };
 

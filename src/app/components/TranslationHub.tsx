@@ -8,6 +8,7 @@ import {
   Radio, MicOff, Music, Upload, Wand2, Square
 } from "lucide-react";
 import { Jungle, semitonesToMult } from "./voiceFx";
+import { toast } from "./Toast";
 
 interface PresetItem {
   id: string;
@@ -328,7 +329,6 @@ export default function TranslationHub({ reloadKey }: { reloadKey?: number }) {
 
   // Soundboard Presets
   const [presets, setPresets] = useState<PresetItem[]>([]);
-  const [showNotification, setShowNotification] = useState("");
 
   const activeAudiosRef = useRef<HTMLAudioElement[]>([]);
   const activeContextsRef = useRef<AudioContext[]>([]);
@@ -1024,8 +1024,7 @@ export default function TranslationHub({ reloadKey }: { reloadKey?: number }) {
   };
 
   const triggerNotification = (msg: string) => {
-    setShowNotification(msg);
-    setTimeout(() => setShowNotification(""), 3000);
+    toast.info(msg);
   };
 
   const swapLanguages = () => {
@@ -1039,14 +1038,6 @@ export default function TranslationHub({ reloadKey }: { reloadKey?: number }) {
 
   return (
     <div className="flex flex-col w-full min-h-screen relative z-10 animate-in fade-in zoom-in-95 duration-300 select-none pb-12">
-      
-      {/* Toast Notification */}
-      {showNotification && (
-        <div className="fixed bottom-6 right-6 z-50 px-5 py-3 rounded-2xl bg-cyan-950/90 border border-cyan-500/30 backdrop-blur-md shadow-2xl flex items-center gap-2 text-xs font-bold text-cyan-300 animate-in slide-in-from-bottom-5 duration-300">
-          <Sparkles className="w-4 h-4 text-cyan-400 animate-pulse" />
-          <span>{showNotification}</span>
-        </div>
-      )}
 
       {/* Main Layout Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-6">

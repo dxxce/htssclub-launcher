@@ -1,7 +1,66 @@
-### 👾 Bản cập nhật v0.9.7
+### 👾 Bản cập nhật v0.9.14
 
-- Sửa lỗi Valorant Store: giờ luôn dùng Riot Client đang chạy thay vì token đã lưu. Hiện nút "Mở Riot Client" khi chưa mở.
-- Sửa lỗi AnimePlayer: bỏ recover loop gây reload video liên tục.
-- Bỏ bo góc (rounded corners) trên AnimePlayer.
-- Sửa nút "Xem tập 1" hiển thị đúng tập đầu tiên.
-- Cập nhật proxy v-stream: thêm logic chọn Referer phù hợp cho các nguồn video khác nhau.
+**💬 Tin nhắn cộng đồng**
+- Thêm trả lời tin nhắn (reply): trích dẫn tin gốc, bấm vào để nhảy tới tin được trả lời.
+- Thêm thả cảm xúc (reaction): hover tin để thả nhanh, bấm huy hiệu để gỡ, đồng bộ realtime.
+- Soạn tin hỗ trợ Markdown kèm thanh định dạng và nút xem trước.
+- Khung nhập tự giãn theo nội dung; kéo-thả tệp vào khung chat để đính kèm.
+
+**🔊 Trò chuyện thoại**
+- Cài đặt thoại: chọn micro / loa, khử vọng / khử ồn, lọc âm nâng cao (kiểu Krisp).
+- Sửa đồng bộ trạng thái tắt mic / tắt tai nghe theo thời gian thực.
+
+**🎨 Giao diện & ổn định**
+- Đổi chọn trạng thái (trực tuyến/chờ/bận/ngoại tuyến) sang dạng thả gọn dưới tên.
+- Tắt menu chuột phải mặc định trên toàn ứng dụng cho gọn gàng.
+- Thiết kế lại danh sách chọn thiết bị, sửa preview liên kết (YouTube...).
+
+### 👾 Bản cập nhật v0.9.13
+
+**🔊 Trò chuyện thoại**
+- Thêm mục Cài đặt thoại: chọn micro / loa, bật-tắt khử vọng, khử ồn, tự cân chỉnh âm lượng.
+- Thêm lọc âm nâng cao (kiểu Krisp) — cắt tạp âm nền như quạt, gõ phím, ồn xung quanh, có thanh chỉnh độ mạnh.
+- Thêm kiểm tra micro trực tiếp bằng dải mức âm lượng.
+- Chuột phải vào người dùng để chỉnh âm lượng riêng, tắt tiếng từng người (có biểu tượng báo).
+- Đồng bộ trạng thái tắt mic / tắt tai nghe theo thời gian thực cho cả người chưa vào phòng.
+
+**💬 Giao diện**
+- Ảnh đại diện trong tin nhắn căn lên trên cạnh tên, gọn gàng hơn.
+- Danh sách chọn thiết bị thiết kế lại theo tông tối, không còn bị che khuất.
+
+### 👾 Bản cập nhật v0.9.12
+
+**💬 Cộng đồng — Tin nhắn & kênh**
+- Hiển thị số tin nhắn chưa đọc trên từng kênh (huy hiệu tròn), tự xoá khi mở kênh.
+- Nút "Có tin nhắn mới" kèm cuộn nhanh xuống cuối khi đang xem tin cũ.
+- Đồng bộ tên / ảnh đại diện người dùng và tên / biểu tượng server theo thời gian thực ở mọi nơi.
+
+**🔊 Cộng đồng — Trò chuyện thoại**
+- Thấy được danh sách người đang trong kênh thoại kể cả khi bạn chưa tham gia, cập nhật realtime.
+- Sửa lỗi danh sách bị trống rồi mới hiện lại khi vừa bấm vào kênh thoại.
+- Chuột phải vào người dùng để mở menu: xem hồ sơ, chuyển xu, chỉnh âm lượng riêng, tắt tiếng người đó (có biểu tượng báo đã tắt tiếng).
+- Làm gọn lại hiển thị số người trong kênh thoại.
+
+**🔐 Ổn định kết nối**
+- Tự động làm mới phiên đăng nhập cho kết nối realtime — không còn rớt do hết hạn token.
+
+
+
+**🎮 Quản lý tài khoản Steam**
+- Tách riêng 2 nút: gỡ khỏi đăng nhập Steam (loginusers.vdf) và gỡ khỏi danh sách quản lý của app.
+- Thêm nút "Đăng xuất tất cả" — xoá toàn bộ tài khoản khỏi Steam; đăng nhập lại sẽ tự thêm lại.
+- Thêm nút mở thư mục userdata (theo SteamID3) của từng tài khoản.
+- Tài khoản đang đăng nhập hiển thị ở đầu danh sách, kèm nhãn trạng thái rõ ràng (Đang dùng / Có trên Steam / Đã lưu).
+- Bố cục thẻ tài khoản gọn gàng, dễ nhìn và dễ quản lý hơn.
+
+**🖼️ Giao diện**
+- Sửa lỗi các tab bị tải lại từ đầu khi quay về Trang chủ — giờ giữ nguyên trạng thái.
+- Nút thu nhỏ / phóng to / đóng cửa sổ giờ nằm sát mép phải, gọn gàng hơn.
+- Thêm tooltip tùy chỉnh đẹp, đồng nhất toàn ứng dụng.
+
+**🔫 Đăng nhập Riot / Valorant**
+- Đăng nhập tài khoản Riot qua cửa sổ trình duyệt chính thức (hỗ trợ cả 2FA) và tự đăng nhập vào Riot Client.
+- Tự động gia hạn phiên khi chọn sử dụng tài khoản đã lưu.
+
+**💬 Discord / Equicord**
+- Sửa kiểm tra trạng thái cài đặt Equicord; cài đặt tự động không hiện cửa sổ terminal.

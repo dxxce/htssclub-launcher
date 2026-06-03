@@ -1,4 +1,4 @@
-                                              const fs = require('fs');
+const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
@@ -14,7 +14,7 @@ const installerPath = path.join(__dirname, `../src-tauri/target/release/bundle/n
 console.log(`==================================================`);
 console.log(`🚀 HTSS LAUNCHER AUTOMATED PUBLISH TOOL`);
 console.log(`==================================================`);
-console.log(`👉 Đang tải phiên bản: ${tagName}`);
+console.log(`👉 Đang chuẩn bị phát hành phiên bản: ${tagName}`);
 
 if (!fs.existsSync(installerPath)) {
   console.error(`❌ KHÔNG TÌM THẤY BỘ CÀI ĐẶT TẠI: \n   ${installerPath}`);
@@ -49,25 +49,48 @@ try {
   process.exit(1);
 }
 
+// Tiện ích nhỏ: kiểm tra một release/tag đã tồn tại trên GitHub chưa.
+function releaseExists(tag) {
+  try {
+    execSync(`gh release view ${tag}`, { stdio: 'ignore' });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // 5. Tiến hành tạo và đăng tải tệp lên GitHub Releases
 const tempNotesPath = path.join(__dirname, '../temp_notes.md');
 try {
-  console.log(`\n📦 Đang tiến hành đẩy bộ cài đặt lên GitHub Releases...`);
-  
   // Ghi nhật ký vào file tạm để tránh lỗi xuống dòng hoặc ký tự đặc biệt trên CLI
   fs.writeFileSync(tempNotesPath, releaseNotes, 'utf8');
-  
-  // Câu lệnh tạo và upload tệp bằng GitHub CLI
-  const command = `gh release create ${tagName} "${installerPath}" --title "HTSS Launcher ${tagName}" --notes-file "${tempNotesPath}"`;
-  
-  execSync(command, { stdio: 'inherit' });
-  
+
+  if (releaseExists(tagName)) {
+    // Release đã tồn tại → cập nhật ghi chú và tải đè bộ cài đặt mới.
+    console.log(`\n♻️  Bản phát hành ${tagName} đã tồn tại — đang cập nhật lại...`);
+    execSync(
+      `gh release edit ${tagName} --title "HTSS Launcher ${tagName}" --notes-file "${tempNotesPath}"`,
+      { stdio: 'inherit' }
+    );
+    console.log(`\n📦 Đang tải đè bộ cài đặt mới lên...`);
+    execSync(`gh release upload ${tagName} "${installerPath}" --clobber`, { stdio: 'inherit' });
+  } else {
+    // Tạo release mới. `--target` trỏ tới nhánh hiện tại; gh tự tạo tag nếu chưa có.
+    console.log(`\n📦 Đang tạo bản phát hành mới và đẩy bộ cài đặt lên GitHub Releases...`);
+    execSync(
+      `gh release create ${tagName} "${installerPath}" --title "HTSS Launcher ${tagName}" --notes-file "${tempNotesPath}"`,
+      { stdio: 'inherit' }
+    );
+  }
+
   console.log(`\n==================================================`);
   console.log(`🎉 ĐÃ ĐĂNG TẢI PHIÊN BẢN MỚI LÊN GITHUB THÀNH CÔNG!`);
   console.log(`==================================================`);
   console.log(`👉 Tất cả người dùng của bạn hiện tại đã có thể cập nhật lên phiên bản ${tagName}!`);
 } catch (error) {
-  console.error(`\n❌ Thất bại khi đẩy lên GitHub Releases. Vui lòng kiểm tra xem bạn đã đăng nhập tài khoản GitHub bằng 'gh auth login' chưa.`);
+  console.error(`\n❌ Thất bại khi đẩy lên GitHub Releases.`);
+  console.error(`   Hãy kiểm tra: đã đăng nhập 'gh auth login' chưa, và repo đã được cấu hình đúng chưa.`);
+  process.exitCode = 1;
 } finally {
   if (fs.existsSync(tempNotesPath)) {
     try {

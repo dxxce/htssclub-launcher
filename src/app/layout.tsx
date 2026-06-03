@@ -1,6 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import { Quicksand } from "next/font/google";
 import "./globals.css";
+import ToastHost from "./components/Toast";
+import TooltipHost from "./components/TooltipHost";
+import CommunityAuthModal from "./components/CommunityAuthModal";
+import DisableContextMenu from "./components/DisableContextMenu";
 
 const quicksand = Quicksand({
   variable: "--font-quicksand",
@@ -41,6 +45,10 @@ export default function RootLayout({
         >
           {children}
         </main>
+        <ToastHost />
+        <TooltipHost />
+        <CommunityAuthModal />
+        <DisableContextMenu />
       </body>
     </html>
   );

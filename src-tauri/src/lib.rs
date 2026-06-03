@@ -2092,11 +2092,14 @@ pub struct SteamAccount {
     pub skip_offline_warning: String,
     #[serde(default)]
     pub allow_auto_login: String,
-    // Steam còn phiên đăng nhập hợp lệ cho tài khoản này không (token còn sống).
-    // Chỉ tài khoản có phiên còn sống mới đăng nhập thẳng được; còn lại phải
-    // nhập lại mật khẩu. Trường runtime, không lưu vào file.
+    // Ghi chú/nhãn tuỳ chỉnh người dùng đặt cho tài khoản (lưu vào file).
     #[serde(default)]
-    pub has_session: bool,
+    pub note: String,
+    // Tài khoản này có đang nằm trong loginusers.vdf của Steam không (runtime).
+    // KHÔNG dùng skip_serializing vì struct này cũng là response trả về frontend
+    // (cần gửi đi). Khi ghi file giá trị này luôn là mặc định nên vô hại.
+    #[serde(default)]
+    pub in_vdf: bool,
 }
 
 /// Đường dẫn file quản lý tài khoản Steam của riêng app.
@@ -2267,7 +2270,8 @@ fn read_vdf_steam_accounts() -> Vec<SteamAccount> {
             wants_offline_mode: m.get("WantsOfflineMode").cloned().unwrap_or_else(|| "0".to_string()),
             skip_offline_warning: m.get("SkipOfflineModeWarning").cloned().unwrap_or_else(|| "0".to_string()),
             allow_auto_login: m.get("AllowAutoLogin").cloned().unwrap_or_else(|| "0".to_string()),
-            has_session: true,
+            note: String::new(),
+            in_vdf: true,
         })
         .collect()
 }
@@ -2304,14 +2308,20 @@ async fn get_steam_accounts() -> Result<Vec<SteamAccount>, String> {
 
     let _ = write_managed_steam_accounts(&managed);
 
-    // 3. Đánh dấu tài khoản nào còn phiên đăng nhập sống (có mặt trong vdf của
-    //    Steam) — chỉ những tài khoản này mới đăng nhập thẳng được.
+    // 3. Đánh dấu tài khoản nào đang có trong loginusers.vdf (đang đăng nhập sẵn
+    //    trên Steam).
     for acc in managed.iter_mut() {
-        acc.has_session = live_ids.contains(&acc.steam_id);
+        acc.in_vdf = live_ids.contains(&acc.steam_id);
     }
 
-    // 4. Sắp xếp theo lần đăng nhập gần nhất rồi trả về.
-    managed.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    // 4. Sắp xếp: tài khoản đang active (MostRecent) lên đầu, rồi tới các tài
+    //    khoản đang có trong vdf, cuối cùng theo thời gian đăng nhập gần nhất.
+    managed.sort_by(|a, b| {
+        b.most_recent
+            .cmp(&a.most_recent)
+            .then(b.in_vdf.cmp(&a.in_vdf))
+            .then(b.timestamp.cmp(&a.timestamp))
+    });
     Ok(managed)
 }
 
@@ -2457,8 +2467,38 @@ async fn add_steam_account() -> Result<(), String> {
     Ok(())
 }
 
-/// Đổi tài khoản Steam đang đăng nhập: tắt Steam, đặt AutoLoginUser + cập nhật
-/// cờ trong vdf, rồi mở lại. Steam sẽ tự đăng nhập nếu tài khoản có RememberPassword.
+/// Đăng xuất / Clear: xoá toàn bộ tài khoản khỏi loginusers.vdf của Steam và
+/// bỏ AutoLoginUser. Sau khi mở lại, Steam hiện màn hình đăng nhập trống; tài
+/// khoản nào đăng nhập sẽ được Steam tự thêm lại vào loginusers.vdf.
+/// (Danh sách quản lý trong app vẫn được giữ để tham khảo.)
+#[tauri::command]
+async fn logout_steam_account() -> Result<(), String> {
+    // 1. Tắt Steam sạch.
+    kill_steam_processes();
+
+    // 2. Bỏ AutoLoginUser để Steam không tự đăng nhập.
+    let _ = create_silent_command("reg")
+        .args([
+            "delete",
+            r"HKCU\Software\Valve\Steam",
+            "/v",
+            "AutoLoginUser",
+            "/f",
+        ])
+        .output();
+
+    // 3. Clear loginusers.vdf — ghi block users rỗng. Steam sẽ tự gắn lại tài
+    //    khoản khi đăng nhập.
+    if let Some(steam_path) = get_steam_path() {
+        let vdf_path = steam_path.join("config").join("loginusers.vdf");
+        let empty = "\"users\"\n{\n}\n";
+        let _ = fs::write(&vdf_path, empty);
+    }
+
+    // 4. Mở lại Steam (màn hình đăng nhập trống).
+    launch_steam_internal()?;
+    Ok(())
+}
 #[tauri::command]
 async fn switch_steam_account(account_name: String, steam_id: String) -> Result<(), String> {
     if account_name.trim().is_empty() {
@@ -2569,29 +2609,39 @@ fn generate_loginusers_vdf(accounts: &[SteamAccount], active_id: &str) -> String
     out
 }
 
-/// Xoá một tài khoản Steam khỏi loginusers.vdf (chỉ gỡ khỏi danh sách lưu,
-/// không xoá dữ liệu game).
+/// Gỡ một tài khoản khỏi DANH SÁCH QUẢN LÝ của app (steam_accounts.json).
+/// Không đụng tới loginusers.vdf của Steam.
 #[tauri::command]
 async fn remove_steam_account(steam_id: String) -> Result<(), String> {
-    // 1. Gỡ khỏi danh sách quản lý của app.
     let mut managed = read_managed_steam_accounts();
     managed.retain(|a| a.steam_id != steam_id);
     write_managed_steam_accounts(&managed)?;
+    Ok(())
+}
 
-    // 2. Gỡ khỏi loginusers.vdf của Steam (dựng lại từ danh sách quản lý mới,
-    //    giữ nguyên tài khoản đang active nếu có).
-    let active_id = read_vdf_steam_accounts()
-        .into_iter()
-        .find(|a| a.most_recent)
-        .map(|a| a.steam_id)
-        .unwrap_or_default();
-    if let Some(steam_path) = get_steam_path() {
-        let vdf_path = steam_path.join("config").join("loginusers.vdf");
-        if vdf_path.exists() {
-            let new_vdf = generate_loginusers_vdf(&managed, &active_id);
-            let _ = fs::write(&vdf_path, new_vdf);
-        }
+/// Gỡ một tài khoản khỏi loginusers.vdf của Steam (gỡ khỏi màn hình đăng nhập
+/// Steam). Chỉ thao tác trên các tài khoản ĐANG có thật trong vdf, giữ nguyên
+/// các tài khoản còn lại. Không xoá khỏi danh sách quản lý, không xoá game.
+#[tauri::command]
+async fn remove_steam_from_vdf(steam_id: String) -> Result<(), String> {
+    let steam_path = get_steam_path().ok_or_else(|| "Không tìm thấy Steam.".to_string())?;
+    let vdf_path = steam_path.join("config").join("loginusers.vdf");
+    if !vdf_path.exists() {
+        return Ok(());
     }
+    let mut live = read_vdf_steam_accounts();
+    if !live.iter().any(|a| a.steam_id == steam_id) {
+        return Ok(()); // không có trong vdf → không cần làm gì
+    }
+    live.retain(|a| a.steam_id != steam_id);
+    // Giữ nguyên tài khoản đang active (MostRecent) nếu nó không bị gỡ.
+    let active_id = live
+        .iter()
+        .find(|a| a.most_recent)
+        .map(|a| a.steam_id.clone())
+        .unwrap_or_default();
+    let new_vdf = generate_loginusers_vdf(&live, &active_id);
+    fs::write(&vdf_path, new_vdf).map_err(|e| format!("Lỗi ghi loginusers.vdf: {}", e))?;
     Ok(())
 }
 
@@ -2599,6 +2649,51 @@ async fn remove_steam_account(steam_id: String) -> Result<(), String> {
 #[tauri::command]
 async fn get_active_steam_account() -> Result<Option<String>, String> {
     Ok(get_steam_autologin_user())
+}
+
+/// Mở thư mục userdata của một tài khoản Steam trong Explorer.
+/// Steam lưu userdata theo SteamID3 (account id) = SteamID64 - 76561197960265728.
+#[tauri::command]
+async fn open_steam_userdata(steam_id: String) -> Result<(), String> {
+    let steam_path = get_steam_path().ok_or_else(|| "Không tìm thấy Steam.".to_string())?;
+
+    // Chuyển SteamID64 → SteamID3 (account id).
+    let id64: u64 = steam_id
+        .trim()
+        .parse()
+        .map_err(|_| "SteamID không hợp lệ.".to_string())?;
+    const STEAM64_BASE: u64 = 76561197960265728;
+    if id64 < STEAM64_BASE {
+        return Err("SteamID không hợp lệ.".to_string());
+    }
+    let id3 = id64 - STEAM64_BASE;
+
+    let userdata_dir = steam_path.join("userdata").join(id3.to_string());
+
+    // Nếu thư mục theo id chưa tồn tại, mở thư mục userdata gốc để người dùng tự xem.
+    let target = if userdata_dir.exists() {
+        userdata_dir
+    } else {
+        let root = steam_path.join("userdata");
+        if !root.exists() {
+            return Err("Không tìm thấy thư mục userdata của Steam.".to_string());
+        }
+        root
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        create_silent_command("explorer")
+            .arg(target.to_string_lossy().to_string())
+            .spawn()
+            .map_err(|e| format!("Không thể mở thư mục: {}", e))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = target;
+        Err("Chỉ hỗ trợ trên Windows.".to_string())
+    }
 }
 
 
@@ -4485,6 +4580,167 @@ async fn open_in_browser(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Lấy thông tin xem trước (Open Graph) của một URL để hiển thị thẻ link
+/// trong tin nhắn. Trả về JSON { url, title, description, image, siteName }.
+/// Đọc trong webview bị chặn CORS nên fetch ở phía Rust.
+#[derive(serde::Serialize)]
+struct LinkPreview {
+    url: String,
+    title: Option<String>,
+    description: Option<String>,
+    image: Option<String>,
+    site_name: Option<String>,
+}
+
+#[tauri::command]
+async fn fetch_link_preview(url: String) -> Result<LinkPreview, String> {
+    // Chỉ cho phép http/https.
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("URL không hợp lệ".into());
+    }
+
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .get(&url)
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        )
+        .header("Accept", "text/html,application/xhtml+xml")
+        .header("Accept-Language", "vi,en;q=0.9")
+        .header("Accept-Encoding", "identity")
+        .send()
+        .await
+        .map_err(|e| format!("Không tải được trang: {}", e))?;
+
+    // Chỉ phân tích HTML.
+    let ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if !ct.contains("text/html") && !ct.is_empty() {
+        return Err("Không phải trang HTML".into());
+    }
+
+    // Lấy tối đa ~400KB phần đầu (đủ chứa <head>).
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    let html = String::from_utf8_lossy(&bytes);
+    let head = if html.len() > 400_000 { &html[..400_000] } else { &html };
+
+    let get_meta = |prop_keys: &[&str]| -> Option<String> {
+        // tìm thẻ <meta ... content="...">  với property/name khớp 1 trong prop_keys
+        let lower = head.to_lowercase();
+        for key in prop_keys {
+            let needle = key.to_lowercase();
+            let mut search_from = 0usize;
+            while let Some(rel) = lower[search_from..].find("<meta") {
+                let start = search_from + rel;
+                let end = lower[start..].find('>').map(|e| start + e + 1).unwrap_or(head.len());
+                let tag = &head[start..end];
+                let tag_lower = &lower[start..end];
+                // tag phải chứa property/name = key
+                if tag_lower.contains(&needle) {
+                    // bóc content="..."
+                    if let Some(c) = extract_attr(tag, "content") {
+                        if !c.trim().is_empty() {
+                            return Some(decode_html_entities(c.trim()));
+                        }
+                    }
+                }
+                search_from = end;
+            }
+        }
+        None
+    };
+
+    let title = get_meta(&["property=\"og:title\"", "name=\"twitter:title\""]).or_else(|| {
+        // fallback <title>
+        let lower = head.to_lowercase();
+        if let Some(s) = lower.find("<title") {
+            if let Some(gt) = lower[s..].find('>') {
+                let cstart = s + gt + 1;
+                if let Some(e) = lower[cstart..].find("</title>") {
+                    return Some(decode_html_entities(head[cstart..cstart + e].trim()));
+                }
+            }
+        }
+        None
+    });
+
+    let description = get_meta(&[
+        "property=\"og:description\"",
+        "name=\"twitter:description\"",
+        "name=\"description\"",
+    ]);
+    let mut image = get_meta(&["property=\"og:image\"", "name=\"twitter:image\""]);
+    let site_name = get_meta(&["property=\"og:site_name\""]);
+
+    // Chuẩn hoá ảnh tương đối → tuyệt đối.
+    if let Some(img) = image.clone() {
+        if img.starts_with("//") {
+            let scheme = if url.starts_with("https") { "https:" } else { "http:" };
+            image = Some(format!("{}{}", scheme, img));
+        } else if img.starts_with('/') {
+            if let Ok(base) = reqwest::Url::parse(&url) {
+                if let Some(host) = base.host_str() {
+                    let scheme = base.scheme();
+                    let port = base.port().map(|p| format!(":{}", p)).unwrap_or_default();
+                    image = Some(format!("{}://{}{}{}", scheme, host, port, img));
+                }
+            }
+        }
+    }
+
+    Ok(LinkPreview {
+        url,
+        title,
+        description,
+        image,
+        site_name,
+    })
+}
+
+/// Bóc giá trị thuộc tính (content="..." hoặc content='...') từ một thẻ meta.
+fn extract_attr(tag: &str, attr: &str) -> Option<String> {
+    let lower = tag.to_lowercase();
+    let key = format!("{}=", attr.to_lowercase());
+    let pos = lower.find(&key)? + key.len();
+    let rest = &tag[pos..];
+    let bytes = rest.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let quote = bytes[0] as char;
+    if quote == '"' || quote == '\'' {
+        let after = &rest[1..];
+        let endrel = after.find(quote)?;
+        Some(after[..endrel].to_string())
+    } else {
+        // không có dấu nháy: lấy tới khoảng trắng hoặc >
+        let endrel = rest.find(|c: char| c.is_whitespace() || c == '>').unwrap_or(rest.len());
+        Some(rest[..endrel].to_string())
+    }
+}
+
+/// Giải mã một số HTML entity phổ biến.
+fn decode_html_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&#x27;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ")
+}
+
 /// Inline splash HTML shown by a native window the instant the app launches,
 /// independent of the web app / dev server so there is never a transparent
 /// empty frame while the UI compiles or loads.
@@ -4955,8 +5211,11 @@ pub fn run() {
         get_active_steam_account,
         switch_steam_account,
         remove_steam_account,
+        remove_steam_from_vdf,
         launch_steam,
         add_steam_account,
+        logout_steam_account,
+        open_steam_userdata,
         check_for_updates,
         download_and_install_update,
         fetch_short_reels_index,
@@ -4972,6 +5231,7 @@ pub fn run() {
         list_tts_voices,
         install_virtual_mic,
         open_in_browser,
+        fetch_link_preview,
         quit_app,
         show_main_window,
         browser_create,

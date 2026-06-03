@@ -196,6 +196,13 @@ video::-webkit-media-text-track-container { display: none !important; }
 }
 .animate-pop-in { animation: pop-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
 
+/* Nhấp nháy nhẹ khi cuộn tới tin nhắn gốc (từ khối trả lời) */
+@keyframes reply-flash {
+  0%, 100% { background-color: transparent; }
+  30% { background-color: rgba(139, 92, 246, 0.18); }
+}
+.reply-flash { animation: reply-flash 1.2s ease-in-out; border-radius: 0.5rem; }
+
 @keyframes slide-up {
   0% { opacity: 0; transform: translateY(14px); }
   100% { opacity: 1; transform: translateY(0); }
@@ -228,3 +235,23 @@ video::-webkit-media-text-track-container { display: none !important; }
   padding-right: 34px;
 }
 .htss-select option { background: #11111f; color: #f4f4fb; }
+
+/* ============================================================================
+   Tooltip — render bởi TooltipHost (portal, position: fixed) nên KHÔNG bị cắt
+   bởi overflow. CSS dưới chỉ đảm bảo phần tử có data-tip là điểm neo hợp lệ.
+   ========================================================================== */
+
+/* ============================================================================
+   Toast (góc phải) — animation vào/ra
+   ========================================================================== */
+@keyframes toast-in {
+  0% { opacity: 0; transform: translateX(24px) scale(0.96); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+.animate-toast-in { animation: toast-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes toast-out {
+  0% { opacity: 1; transform: translateX(0) scale(1); }
+  100% { opacity: 0; transform: translateX(24px) scale(0.96); }
+}
+.animate-toast-out { animation: toast-out 0.2s ease-in both; }

@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { 
   User, Trash2, Check, Plus, RefreshCw, 
-  AlertCircle, Loader2, Laptop, LogOut, KeyRound, Eye, EyeOff, ChevronDown, ExternalLink
+  Loader2, Laptop, LogOut, KeyRound, ChevronDown, ExternalLink, Copy
 } from "lucide-react";
 import { useValorantStore } from "../store/useValorantStore";
+import ContextMenu, { ContextMenuState } from "./ContextMenu";
+import { toast } from "./Toast";
 
 const SHARD_OPTIONS = [
   { value: "ap", label: "Châu Á - Thái Bình Dương (AP)" },
@@ -23,24 +25,19 @@ export default function ValorantAccounts() {
     setActiveAccount: handleSelectAccountStore,
     deleteAccount: handleDeleteAccountStore,
     addClientAccount: handleAddClientStore,
-    addCredentialsAccount: handleAddCredentialsStore,
     addBrowserAccount: handleAddBrowserStore,
     refreshAccount: handleRefreshStore,
     logoutClientKeepSession: handleLogoutKeepSessionStore
   } = useValorantStore();
 
   const [actionLoading, setActionLoading] = useState(false);
-  const [status, setStatus] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
 
-  // Form đăng nhập bằng tài khoản/mật khẩu (lưu phiên đám mây, tự gia hạn).
-  const [loginUser, setLoginUser] = useState("");
-  const [loginPass, setLoginPass] = useState("");
+  // Khu vực (shard) dùng cho đăng nhập qua trình duyệt.
   const [loginShard, setLoginShard] = useState("ap");
-  const [showPass, setShowPass] = useState(false);
-  const [showPassLogin, setShowPassLogin] = useState(false);
   const [shardOpen, setShardOpen] = useState(false);
   const [refreshingPuuid, setRefreshingPuuid] = useState<string | null>(null);
   const shardRef = useRef<HTMLDivElement | null>(null);
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
   // Đóng dropdown chọn khu vực khi click ra ngoài.
   useEffect(() => {
@@ -54,26 +51,30 @@ export default function ValorantAccounts() {
     return () => document.removeEventListener("mousedown", onClick);
   }, [shardOpen]);
 
-  const showStatus = (type: "success" | "error" | "info", text: string) => {
-    setStatus({ type, text });
-    setTimeout(() => {
-      setStatus(null);
-    }, 6000);
-  };
-
   const handleSelectAccount = async (puuid: string) => {
     try {
       setActionLoading(true);
-      await handleSelectAccountStore(puuid);
-      showStatus("success", "Đã chuyển đổi tài khoản thành công!");
-    } catch (err: any) {
-      showStatus("error", "Lỗi chuyển đổi tài khoản: " + err.toString());
-    } finally {
-      setActionLoading(false);
-    }
+      await toast.promise(handleSelectAccountStore(puuid), {
+        loading: "Đang chuyển đổi tài khoản...",
+        success: "Đã chuyển đổi tài khoản thành công!",
+        error: (e) => "Lỗi chuyển đổi tài khoản: " + e.toString(),
+      });
+    } catch { /* ignore */ }
+    finally { setActionLoading(false); }
   };
 
   const handleDeleteAccount = (puuid: string) => {
+    const doDelete = async () => {
+      try {
+        setActionLoading(true);
+        await toast.promise(handleDeleteAccountStore(puuid), {
+          loading: "Đang xóa tài khoản...",
+          success: "Đã xóa tài khoản thành công!",
+          error: (e) => "Lỗi khi xóa tài khoản: " + e.toString(),
+        });
+      } catch { /* ignore */ }
+      finally { setActionLoading(false); }
+    };
     if (window.confirmCustom) {
       window.confirmCustom({
         title: "Xóa tài khoản",
@@ -81,113 +82,97 @@ export default function ValorantAccounts() {
         confirmText: "Xóa tài khoản",
         cancelText: "Hủy",
         type: "danger",
-        onConfirm: async () => {
-          try {
-            setActionLoading(true);
-            await handleDeleteAccountStore(puuid);
-            showStatus("success", "Đã xóa tài khoản thành công!");
-          } catch (err: any) {
-            showStatus("error", "Lỗi khi xóa tài khoản: " + err.toString());
-          } finally {
-            setActionLoading(false);
-          }
-        }
+        onConfirm: doDelete,
       });
     } else {
-      if (confirm("Bạn có chắc chắn muốn xóa tài khoản này khỏi danh sách đã lưu?")) {
-        (async () => {
-          try {
-            setActionLoading(true);
-            await handleDeleteAccountStore(puuid);
-            showStatus("success", "Đã xóa tài khoản thành công!");
-          } catch (err: any) {
-            showStatus("error", "Lỗi khi xóa tài khoản: " + err.toString());
-          } finally {
-            setActionLoading(false);
-          }
-        })();
-      }
+      doDelete();
     }
   };
 
   const handleAddClient = async () => {
     try {
       setActionLoading(true);
-      setStatus({ type: "info", text: "Đang quét Riot Client đang chạy ở local..." });
-      await handleAddClientStore();
-      showStatus("success", `Lưu thành công tài khoản mới từ Riot Client!`);
-    } catch (err: any) {
-      showStatus("error", err.toString());
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleAddCredentials = async () => {
-    if (!loginUser.trim() || !loginPass) {
-      showStatus("error", "Vui lòng nhập đầy đủ tài khoản và mật khẩu Riot.");
-      return;
-    }
-    try {
-      setActionLoading(true);
-      setStatus({ type: "info", text: "Đang đăng nhập vào Riot... (có thể mất vài giây)" });
-      await handleAddCredentialsStore(loginUser.trim(), loginPass, loginShard);
-      setLoginUser("");
-      setLoginPass("");
-      showStatus("success", "Đăng nhập & lưu tài khoản thành công! Phiên sẽ tự động gia hạn.");
-    } catch (err: any) {
-      showStatus("error", err.toString().replace(/^Error:\s*/, ""));
-    } finally {
-      setActionLoading(false);
-    }
+      await toast.promise(handleAddClientStore(), {
+        loading: "Đang quét Riot Client đang chạy ở local...",
+        success: "Lưu thành công tài khoản mới từ Riot Client!",
+        error: (e) => e.toString(),
+      });
+    } catch { /* ignore */ }
+    finally { setActionLoading(false); }
   };
 
   const handleAddBrowser = async () => {
     try {
       setActionLoading(true);
-      setStatus({ type: "info", text: "Đã mở cửa sổ đăng nhập Riot. Vui lòng đăng nhập trong cửa sổ vừa hiện ra..." });
-      await handleAddBrowserStore(loginShard);
-      showStatus("success", "Đăng nhập & lưu tài khoản thành công! Phiên sẽ tự động gia hạn.");
-    } catch (err: any) {
-      showStatus("error", err.toString().replace(/^Error:\s*/, ""));
-    } finally {
-      setActionLoading(false);
-    }
+      await toast.promise(handleAddBrowserStore(loginShard), {
+        loading: "Đã mở cửa sổ đăng nhập Riot. Vui lòng đăng nhập trong cửa sổ vừa hiện ra...",
+        success: "Đăng nhập & lưu tài khoản thành công! Phiên sẽ tự động gia hạn.",
+        error: (e) => e.toString().replace(/^Error:\s*/, ""),
+      });
+    } catch { /* ignore */ }
+    finally { setActionLoading(false); }
   };
 
   const handleRefreshAccount = async (puuid: string) => {
     const acc = accounts.find((a) => a.puuid === puuid);
+    setRefreshingPuuid(puuid);
     try {
-      setRefreshingPuuid(puuid);
-      await handleRefreshStore(puuid);
-      showStatus("success", "Đã gia hạn phiên đăng nhập thành công!");
-    } catch (err: any) {
-      const msg = err.toString();
-      if (msg.includes("SESSION_EXPIRED") || msg.includes("REAUTH_EXPIRED")) {
-        if (acc?.login_type === "credentials") {
-          showStatus("error", "Phiên đã hết hạn hoàn toàn. Vui lòng đăng nhập lại bằng mật khẩu.");
-        } else {
-          showStatus("error", "Phiên đã hết hạn. Hãy mở Riot Client, đăng nhập lại tài khoản này rồi nhấn 'Lưu TK từ Riot Client đang chạy' để cập nhật.");
-        }
-      } else {
-        showStatus("error", "Lỗi gia hạn phiên: " + msg);
-      }
-    } finally {
-      setRefreshingPuuid(null);
-    }
+      await toast.promise(handleRefreshStore(puuid), {
+        loading: "Đang gia hạn phiên đăng nhập...",
+        success: "Đã gia hạn phiên đăng nhập thành công!",
+        error: (err) => {
+          const msg = err.toString();
+          if (msg.includes("SESSION_EXPIRED") || msg.includes("REAUTH_EXPIRED")) {
+            return acc?.login_type === "credentials"
+              ? "Phiên đã hết hạn hoàn toàn. Vui lòng đăng nhập lại qua cửa sổ Riot."
+              : "Phiên đã hết hạn. Hãy mở Riot Client, đăng nhập lại tài khoản này rồi nhấn 'Lưu TK từ Riot Client đang chạy'.";
+          }
+          return "Lỗi gia hạn phiên: " + msg;
+        },
+      });
+    } catch { /* ignore */ }
+    finally { setRefreshingPuuid(null); }
   };
 
   const handleLogoutKeepSession = async () => {
     try {
       setActionLoading(true);
-      setStatus({ type: "info", text: "Đang tiến hành đăng xuất khỏi Riot Client..." });
-      await handleLogoutKeepSessionStore();
-      showStatus("success", "Đăng xuất thành công! (Phiên đăng nhập đã lưu vẫn an toàn)");
-    } catch (err: any) {
-      showStatus("error", "Lỗi đăng xuất: " + err.toString());
-    } finally {
-      setActionLoading(false);
+      await toast.promise(handleLogoutKeepSessionStore(), {
+        loading: "Đang tiến hành đăng xuất khỏi Riot Client...",
+        success: "Đăng xuất thành công! (Phiên đăng nhập đã lưu vẫn an toàn)",
+        error: (e) => "Lỗi đăng xuất: " + e.toString(),
+      });
+    } catch { /* ignore */ }
+    finally { setActionLoading(false); }
+  };
+
+  const handleCopyId = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Đã sao chép vào clipboard.");
+    } catch {
+      toast.error("Không sao chép được.");
     }
+  };
+
+  const openContextMenu = (e: React.MouseEvent, acc: any) => {
+    e.preventDefault();
+    const active = activePuuid === acc.puuid;
+    const items: ContextMenuState["items"] = [];
+    if (!active) {
+      items.push({ label: "Chọn sử dụng tài khoản", icon: Check, accent: "emerald", onClick: () => handleSelectAccount(acc.puuid) });
+    }
+    items.push({
+      label: refreshingPuuid === acc.puuid ? "Đang gia hạn..." : "Gia hạn phiên đăng nhập",
+      icon: RefreshCw,
+      accent: "sky",
+      disabled: refreshingPuuid === acc.puuid,
+      onClick: () => handleRefreshAccount(acc.puuid),
+    });
+    items.push({ label: "Sao chép PUUID", icon: Copy, onClick: () => handleCopyId(acc.puuid) });
+    items.push({ type: "separator" });
+    items.push({ label: "Xóa tài khoản", icon: Trash2, danger: true, onClick: () => handleDeleteAccount(acc.puuid) });
+    setMenu({ x: e.clientX, y: e.clientY, header: acc.game_name, items });
   };
 
   useEffect(() => {
@@ -205,18 +190,6 @@ export default function ValorantAccounts() {
 
   return (
     <div className="flex flex-col h-full w-full mt-6 select-none animate-fadeIn">
-      {/* Banner status notification */}
-      {status && (
-        <div className={`flex items-start gap-3 p-4 rounded-xl border mb-6 text-sm transition-all duration-300 ${
-          status.type === "success" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" :
-          status.type === "error" ? "bg-red-500/10 border-red-500/20 text-red-400" :
-          "bg-blue-500/10 border-blue-500/20 text-blue-400"
-        }`}>
-          {status.type === "info" ? <Loader2 className="w-4 h-4 mt-0.5 animate-spin flex-shrink-0" /> : <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />}
-          <span className="font-semibold leading-relaxed">{status.text}</span>
-        </div>
-      )}
-
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         
         {/* LEFT & CENTER: Saved Accounts List */}
@@ -286,6 +259,7 @@ export default function ValorantAccounts() {
                 return (
                   <div 
                     key={acc.puuid}
+                    onContextMenu={(e) => openContextMenu(e, acc)}
                     className={`relative rounded-2xl overflow-hidden border transition-all duration-300 bg-white/[0.02] p-5 flex items-center justify-between ${
                       isActive 
                         ? "border-emerald-500/30 bg-emerald-500/[0.02] shadow-[0_0_20px_rgba(16,185,129,0.05)]" 
@@ -325,7 +299,7 @@ export default function ValorantAccounts() {
                         onClick={() => handleRefreshAccount(acc.puuid)}
                         disabled={actionLoading || refreshingPuuid === acc.puuid}
                         className="p-2.5 bg-cyan-500/5 hover:bg-cyan-500/15 text-cyan-400 rounded-xl border border-cyan-500/10 hover:border-cyan-500/20 transition-all cursor-pointer disabled:opacity-50"
-                        title="Gia hạn phiên đăng nhập"
+                        data-tip="Gia hạn phiên đăng nhập"
                       >
                         <RefreshCw className={`w-4 h-4 ${refreshingPuuid === acc.puuid ? "animate-spin" : ""}`} />
                       </button>
@@ -333,7 +307,7 @@ export default function ValorantAccounts() {
                         onClick={() => handleDeleteAccount(acc.puuid)}
                         disabled={actionLoading}
                         className="p-2.5 bg-red-500/5 hover:bg-red-500/15 text-red-400 rounded-xl border border-red-500/10 hover:border-red-500/20 transition-all cursor-pointer"
-                        title="Xóa tài khoản"
+                        data-tip="Xóa tài khoản"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -424,61 +398,6 @@ export default function ValorantAccounts() {
                 {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
                 Mở cửa sổ đăng nhập Riot
               </button>
-
-              {/* Divider */}
-              <button
-                type="button"
-                onClick={() => setShowPassLogin((s) => !s)}
-                className="flex items-center gap-2 text-[11px] text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer mt-1"
-              >
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showPassLogin ? "rotate-180" : ""}`} />
-                Hoặc đăng nhập nhanh bằng mật khẩu (không hỗ trợ 2FA)
-              </button>
-
-              {/* Fallback: direct username/password (may be blocked by captcha) */}
-              {showPassLogin && (
-                <div className="flex flex-col gap-3 pt-1 animate-fadeIn">
-                  <input
-                    type="text"
-                    value={loginUser}
-                    onChange={(e) => setLoginUser(e.target.value)}
-                    placeholder="Tên đăng nhập Riot"
-                    autoComplete="off"
-                    disabled={actionLoading}
-                    className="w-full px-3.5 py-2.5 bg-black/40 border border-white/10 focus:border-purple-500/40 rounded-xl text-sm text-white placeholder:text-neutral-600 outline-none transition-colors"
-                  />
-
-                  <div className="relative">
-                    <input
-                      type={showPass ? "text" : "password"}
-                      value={loginPass}
-                      onChange={(e) => setLoginPass(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleAddCredentials(); }}
-                      placeholder="Mật khẩu"
-                      autoComplete="off"
-                      disabled={actionLoading}
-                      className="w-full px-3.5 py-2.5 pr-10 bg-black/40 border border-white/10 focus:border-purple-500/40 rounded-xl text-sm text-white placeholder:text-neutral-600 outline-none transition-colors"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPass((s) => !s)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 cursor-pointer"
-                      tabIndex={-1}
-                    >
-                      {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-
-                  <button
-                    onClick={handleAddCredentials}
-                    disabled={actionLoading}
-                    className="w-full py-2.5 bg-white/5 hover:bg-white/10 disabled:bg-white/5 text-white rounded-xl font-bold text-xs border border-white/10 hover:border-purple-500/30 transition-all cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    Đăng nhập & Lưu tài khoản
-                  </button>
-                </div>
-              )}
             </div>
           </div>
 
@@ -520,6 +439,8 @@ export default function ValorantAccounts() {
         </div>
 
       </div>
+
+      <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }

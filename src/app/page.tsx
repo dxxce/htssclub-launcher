@@ -3,11 +3,16 @@
 import {
   Settings, Search, Bell, Minus, Square, X,
   Film, Home, Compass, UserCircle, LogOut, TrendingUp, Sparkles, ChevronLeft, RotateCw, Gamepad2, MessageSquare, Languages, Globe,
-  PanelLeft, PanelLeftClose, LayoutGrid, LayoutPanelLeft, Check, ChevronRight, Library
+  PanelLeft, PanelLeftClose, LayoutGrid, LayoutPanelLeft, Check, ChevronRight, Library, Users, Coins, ChevronDown
 } from "lucide-react";
 import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import ConfirmModal, { ConfirmOptions } from "./components/ConfirmModal";
+import { useCommunityStore } from "./store/useCommunityStore";
+import { toast } from "./components/Toast";
+import CommunityAuthGate from "./components/CommunityAuthGate";
+import CommunityAccountSettings from "./components/CommunityAccountSettings";
+import WalletModal from "./components/WalletModal";
 
 // Heavy sub-apps are loaded on demand (client-only) so the initial route stays
 // small. Each one is only compiled/fetched the first time it's needed, which
@@ -29,6 +34,7 @@ const importTranslationHub = () => import("./components/TranslationHub");
 const importCombinedDeals = () => import("./components/CombinedDeals");
 const importWebBrowser = () => import("./components/WebBrowser");
 const importSteamAccounts = () => import("./components/SteamAccounts");
+const importCommunityHub = () => import("./components/CommunityHub");
 
 const PREFETCHERS = [
   importValorantHub,
@@ -39,6 +45,7 @@ const PREFETCHERS = [
   importCombinedDeals,
   importWebBrowser,
   importSteamAccounts,
+  importCommunityHub,
 ];
 
 const ValorantHub = dynamic(importValorantHub, { ssr: false, loading: loadingFallback });
@@ -49,9 +56,11 @@ const TranslationHub = dynamic(importTranslationHub, { ssr: false, loading: load
 const CombinedDeals = dynamic(importCombinedDeals, { ssr: false, loading: loadingFallback });
 const WebBrowser = dynamic(importWebBrowser, { ssr: false, loading: loadingFallback });
 const SteamAccounts = dynamic(importSteamAccounts, { ssr: false, loading: loadingFallback });
+const CommunityHub = dynamic(importCommunityHub, { ssr: false, loading: loadingFallback });
 
 const NAV_ITEMS = [
   { id: "home", label: "Trang chủ", icon: Home },
+  { id: "community", label: "Cộng đồng", icon: Users },
   { id: "anime", label: "Anime", icon: Film },
   { id: "short_reels", label: "Phim Ngắn", icon: Compass },
   { id: "valorant", label: "Valorant", icon: Gamepad2 },
@@ -150,6 +159,14 @@ const APPS = [
     tag: "Cộng đồng",
   },
   {
+    id: "community",
+    label: "Cộng đồng HTSS",
+    icon: Users,
+    desc: "Chat realtime, kênh thoại, server riêng và ví xu cộng đồng.",
+    accent: "#8b5cf6",
+    tag: "Cộng đồng",
+  },
+  {
     id: "translation",
     label: "Dịch & Giọng nói",
     icon: Languages,
@@ -174,14 +191,48 @@ const NEWS_ACCENTS: Record<string, string> = {
   "Hệ thống": "#c084fc",
 };
 
+const PRESENCE_DOT: Record<string, string> = {
+  ONLINE: "text-emerald-400",
+  IDLE: "text-amber-400",
+  DND: "text-rose-400",
+  OFFLINE: "text-neutral-600",
+};
+const PRESENCE_TEXT: Record<string, string> = {
+  ONLINE: "Trực tuyến",
+  IDLE: "Chờ",
+  DND: "Bận",
+  OFFLINE: "Ngoại tuyến",
+};
+function userInitials(name?: string) {
+  if (!name) return "?";
+  return name.trim().slice(0, 2).toUpperCase();
+}
+
 export default function HomePage() {
   const [activeNav, setActiveNav] = useState("home");
   const [activeTab, setActiveTab] = useState("Thịnh hành");
   const [reloadKey, setReloadKey] = useState(0);
-  const [visitedTabs, setVisitedTabs] = useState<string[]>(["home"]);
+  const [visitedTabs, setVisitedTabs] = useState<string[]>(["home", "community"]);
   const [backCallbacks, setBackCallbacks] = useState<Record<string, (() => void) | null>>({});
   const [confirmConfig, setConfirmConfig] = useState<ConfirmOptions | null>(null);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const [showPresenceMenu, setShowPresenceMenu] = useState(false);
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
+  const [showWallet, setShowWallet] = useState(false);
+
+  // Cộng đồng: trạng thái auth dùng chung để hiển thị avatar/tên trên header.
+  const communityUser = useCommunityStore((s) => s.user);
+  const communityAuthChecked = useCommunityStore((s) => s.authChecked);
+  const bootstrapCommunity = useCommunityStore((s) => s.bootstrap);
+  const openCommunityAuth = useCommunityStore((s) => s.openAuthModal);
+  const communityLogout = useCommunityStore((s) => s.logout);
+  const setCommunityPresence = useCommunityStore((s) => s.setPresence);
+  const communityPresence = communityUser?.presence ?? "OFFLINE";
+
+  // Khôi phục phiên đăng nhập cộng đồng khi mở app (nếu có token đã lưu).
+  useEffect(() => {
+    bootstrapCommunity();
+  }, [bootstrapCommunity]);
 
   // Layout preferences (persisted to localStorage).
   // "tabs"   = current top-tabs layout
@@ -366,9 +417,15 @@ export default function HomePage() {
   };
 
   // Open tabs are all visited functions except the home dashboard.
-  const openTabs = visitedTabs.filter((id) => id !== "home" && NAV_MAP[id]);
+  // "community" is pinned right after Home and cannot be closed.
+  const openTabs = (() => {
+    const rest = visitedTabs.filter((id) => id !== "home" && id !== "community" && NAV_MAP[id]);
+    const ordered = NAV_MAP["community"] ? ["community", ...rest] : rest;
+    return ordered;
+  })();
 
   const closeTab = useCallback((id: string) => {
+    if (id === "home" || id === "community") return; // tab cố định, không thể đóng
     setVisitedTabs((prev) => prev.filter((tab) => tab !== id));
     setBackCallbacks((prev) => {
       const next = { ...prev };
@@ -391,15 +448,17 @@ export default function HomePage() {
   // merged back into visitedTabs preserving "home".
   const moveTab = useCallback((sourceId: string, targetId: string) => {
     if (sourceId === targetId) return;
+    // "community" is pinned right after Home and cannot be dragged/displaced.
+    if (sourceId === "community" || targetId === "community") return;
     setVisitedTabs((prev) => {
-      const order = prev.filter((t) => t !== "home" && NAV_MAP[t]);
+      const order = prev.filter((t) => t !== "home" && t !== "community" && NAV_MAP[t]);
       const from = order.indexOf(sourceId);
       const to = order.indexOf(targetId);
       if (from === -1 || to === -1) return prev;
       order.splice(from, 1);
       order.splice(to, 0, sourceId);
-      // Keep "home" first, then the newly ordered function tabs.
-      return ["home", ...order];
+      // Keep "home" first, "community" pinned, then the reordered tabs.
+      return ["home", ...(NAV_MAP["community"] ? ["community"] : []), ...order];
     });
   }, []);
 
@@ -463,6 +522,20 @@ export default function HomePage() {
     }
   };
 
+  // ── Bắt buộc đăng nhập để vào app ──
+  // Trong khi chưa kiểm tra xong phiên đăng nhập đã lưu → màn hình chờ.
+  if (!communityAuthChecked) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-[#06060d] bg-dot-pattern">
+        <div className="w-8 h-8 rounded-full border-2 border-violet-500/20 border-t-violet-400 animate-spin" />
+      </div>
+    );
+  }
+  // Chưa đăng nhập → chỉ hiện giao diện đăng nhập/đăng ký.
+  if (!communityUser) {
+    return <CommunityAuthGate />;
+  }
+
   return (
     <div className="w-full h-full relative z-10 flex flex-col text-white overflow-hidden bg-[#06060d] bg-dot-pattern">
       {/* Aurora ambient background */}
@@ -473,7 +546,7 @@ export default function HomePage() {
       {/* Unified Top Header Bar */}
       <div 
         data-tauri-drag-region="true" 
-        className="w-full h-14 bg-[#0e0e1a] border-b border-white/[0.06] flex items-center justify-between px-4 select-none relative z-50 flex-shrink-0 cursor-move"
+        className="w-full h-14 bg-[#0e0e1a] border-b border-white/[0.06] flex items-center justify-between pl-4 select-none relative z-50 flex-shrink-0 cursor-move"
       >
         {/* Left Side: Logo & Launcher info & Sub-app Navigation controls */}
         <div data-tauri-drag-region="false" className="flex items-center gap-2 cursor-default">
@@ -521,7 +594,8 @@ export default function HomePage() {
             </div>
             <button
               onClick={() => setShowSettings(true)}
-              title="Cài đặt giao diện"
+              data-tip="Cài đặt giao diện"
+              data-tip-pos="bottom"
               className="relative w-8 h-8 rounded-xl flex items-center justify-center hover:bg-white/[0.06] border border-transparent hover:border-white/10 transition-all text-neutral-400 hover:text-white cursor-pointer active:scale-90 group/set"
             >
               <Settings className="w-4 h-4 transition-transform duration-500 group-hover/set:rotate-90" />
@@ -531,40 +605,120 @@ export default function HomePage() {
           {/* User Profile Dropdown Widget */}
           <div className="relative">
             <button 
-              onClick={() => setShowProfileDropdown(!showProfileDropdown)}
-              className="flex items-center gap-2 p-1 pr-2.5 rounded-full hover:bg-white/[0.06] border border-white/[0.05] hover:border-white/10 transition-all cursor-pointer group"
+              onClick={() => {
+                if (communityUser) setShowProfileDropdown(!showProfileDropdown);
+                else openCommunityAuth();
+              }}
+              className="flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-full hover:bg-white/[0.08] bg-white/[0.04] border border-white/[0.08] hover:border-white/15 transition-all cursor-pointer group"
             >
-              <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-indigo-500 via-violet-500 to-fuchsia-500 flex items-center justify-center flex-shrink-0 shadow-[0_0_12px_rgba(139,92,246,0.35)] border border-white/15 group-hover:scale-105 transition-transform duration-200">
-                <span className="text-[10px] font-black text-white">DC</span>
+              <div className="relative flex-shrink-0">
+                <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-indigo-500 via-violet-500 to-fuchsia-500 flex items-center justify-center overflow-hidden">
+                  {communityUser?.avatarUrl ? (
+                    <img src={communityUser.avatarUrl} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-[10px] font-black text-white">
+                      {communityUser ? userInitials(communityUser.displayName || communityUser.username) : "?"}
+                    </span>
+                  )}
+                </div>
+                {communityUser && (
+                  <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-current ${PRESENCE_DOT[communityPresence]} ring-2 ring-[#0e0e1a]`} />
+                )}
               </div>
-              <span className="text-xs font-bold text-neutral-300 group-hover:text-white transition-colors max-w-[80px] truncate hidden sm:inline">
-                DeeCee
-              </span>
+              {communityUser ? (
+                <div className="text-left hidden sm:block">
+                  <div className="text-[11px] font-bold text-white leading-none max-w-[100px] truncate">{communityUser.displayName || communityUser.username}</div>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <Coins className="w-2.5 h-2.5 text-amber-400" />
+                    <span className="text-[9px] font-bold text-amber-300 leading-none">{communityUser.balance.toLocaleString("vi-VN")}</span>
+                  </div>
+                </div>
+              ) : (
+                <span className="text-[11px] font-bold text-neutral-300 group-hover:text-white transition-colors hidden sm:inline px-0.5">Đăng nhập</span>
+              )}
+              {communityUser && <ChevronDown className="w-3 h-3 text-neutral-500 flex-shrink-0" />}
             </button>
 
-            {showProfileDropdown && (
+            {showProfileDropdown && communityUser && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowProfileDropdown(false)} />
-                <div className="absolute right-0 mt-2.5 w-56 glass rounded-2xl p-3 shadow-2xl z-50 animate-pop-in overflow-hidden">
+                <div className="absolute right-0 mt-2.5 w-60 glass rounded-2xl p-3 shadow-2xl z-50 animate-pop-in overflow-hidden">
                   <div className="absolute inset-x-0 top-0 h-px grad-hairline" />
                   <div className="flex items-center gap-3 pb-3 border-b border-white/[0.06]">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 border border-white/10 bg-gradient-to-tr from-indigo-500/25 to-fuchsia-500/10 shadow-[0_0_12px_rgba(139,92,246,0.2)]">
-                      <UserCircle className="w-5 h-5 text-violet-300" />
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-gradient-to-tr from-indigo-500 via-violet-500 to-fuchsia-500 overflow-hidden">
+                      {communityUser.avatarUrl ? (
+                        <img src={communityUser.avatarUrl} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-xs font-black text-white">{userInitials(communityUser.displayName || communityUser.username)}</span>
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-extrabold text-white truncate">DeeCee</div>
-                      <div className="text-[9px] text-violet-300/80 font-bold tracking-wide uppercase truncate">Premium Member</div>
+                      <div className="text-sm font-extrabold text-white truncate">{communityUser.displayName || communityUser.username}</div>
+                      {/* Trạng thái dạng select gọn ngay dưới tên */}
+                      <div className="relative mt-0.5">
+                        <button
+                          onClick={() => setShowPresenceMenu((v) => !v)}
+                          className="flex items-center gap-1.5 px-1.5 py-0.5 -ml-1.5 rounded-md text-[11px] font-bold text-neutral-300 hover:bg-white/[0.06] transition-colors cursor-pointer"
+                        >
+                          <span className={`w-2 h-2 rounded-full bg-current ${PRESENCE_DOT[communityPresence]}`} />
+                          <span className={PRESENCE_DOT[communityPresence]}>{PRESENCE_TEXT[communityPresence]}</span>
+                          <ChevronDown className={`w-3 h-3 text-neutral-500 transition-transform ${showPresenceMenu ? "rotate-180" : ""}`} />
+                        </button>
+                        {showPresenceMenu && (
+                          <>
+                            <div className="fixed inset-0 z-[55]" onClick={() => setShowPresenceMenu(false)} />
+                            <div className="absolute left-0 top-full mt-1 z-[60] w-40 rounded-xl border border-white/10 bg-[#101019]/98 backdrop-blur-xl p-1 shadow-[0_18px_50px_rgba(0,0,0,0.65)] animate-pop-in">
+                              {(["ONLINE", "IDLE", "DND", "OFFLINE"] as const).map((st) => (
+                                <button
+                                  key={st}
+                                  onClick={() => { setCommunityPresence(st); setShowPresenceMenu(false); }}
+                                  className={`flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-[12px] font-semibold transition-colors cursor-pointer ${
+                                    communityPresence === st ? "bg-white/[0.08] text-white" : "text-neutral-300 hover:bg-white/[0.05] hover:text-white"
+                                  }`}
+                                >
+                                  <span className={`w-2 h-2 rounded-full bg-current ${PRESENCE_DOT[st]}`} />
+                                  {PRESENCE_TEXT[st]}
+                                  {communityPresence === st && <Check className="w-3.5 h-3.5 ml-auto text-violet-300" />}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
-                  <div className="flex flex-col gap-0.5 mt-2">
+                  <button
+                    onClick={() => { setShowProfileDropdown(false); setShowWallet(true); }}
+                    className="group/wallet w-full flex items-center gap-2.5 px-3 py-2.5 mt-1 mb-1 rounded-xl bg-gradient-to-r from-amber-500/[0.12] to-orange-500/[0.06] border border-amber-500/20 hover:border-amber-500/40 transition-all cursor-pointer text-left"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-amber-500/15 flex items-center justify-center flex-shrink-0">
+                      <Coins className="w-5 h-5 text-amber-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-amber-400/70">Ví xu</div>
+                      <div className="text-[15px] font-black text-amber-300 leading-tight">{communityUser.balance.toLocaleString("vi-VN")}</div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-amber-400/50 group-hover/wallet:text-amber-300 group-hover/wallet:translate-x-0.5 transition-all" />
+                  </button>
+                  <div className="flex flex-col gap-0.5">
                     <button
-                      onClick={() => { setShowProfileDropdown(false); setShowSettings(true); }}
+                      onClick={() => { setShowProfileDropdown(false); setShowAccountSettings(true); }}
                       className="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-xl text-[12px] font-semibold text-neutral-300 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer text-left"
                     >
-                      <Settings className="w-4 h-4 text-neutral-400" />
-                      Cài đặt giao diện
+                      <UserCircle className="w-4 h-4 text-neutral-400" />
+                      Cài đặt tài khoản
                     </button>
-                    <button className="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-xl text-[12px] font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors cursor-pointer text-left">
+                    <button
+                      onClick={() => {
+                        setShowProfileDropdown(false);
+                        toast.promise(communityLogout(), {
+                          loading: "Đang đăng xuất...",
+                          success: "Đã đăng xuất.",
+                          error: "Đăng xuất thất bại.",
+                        });
+                      }}
+                      className="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-xl text-[12px] font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors cursor-pointer text-left"
+                    >
                       <LogOut className="w-4 h-4 text-rose-400/80" />
                       Đăng xuất
                     </button>
@@ -618,7 +772,8 @@ export default function HomePage() {
               }}
               disabled={activeNav === "home"}
               className="w-8 h-8 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] hover:border-violet-500/40 text-neutral-400 hover:text-violet-300 flex items-center justify-center transition-all duration-200 cursor-pointer active:scale-90 disabled:opacity-25 disabled:cursor-default disabled:hover:bg-white/[0.04] disabled:hover:border-white/[0.06] disabled:hover:text-neutral-400"
-              title={activeNav === "home" ? "Quay lại" : (backCallbacks[activeNav] ? "Quay lại" : "Quay lại Trang chủ")}
+              data-tip={activeNav === "home" ? "Quay lại" : (backCallbacks[activeNav] ? "Quay lại" : "Quay lại Trang chủ")}
+              data-tip-pos="bottom"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -627,7 +782,8 @@ export default function HomePage() {
             <button
               onClick={handleReload}
               className="w-8 h-8 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] hover:border-violet-500/40 text-neutral-400 hover:text-violet-300 flex items-center justify-center transition-all duration-200 cursor-pointer active:scale-90 group/reload"
-              title="Tải lại"
+              data-tip="Tải lại"
+              data-tip-pos="bottom"
             >
               <RotateCw className="w-3.5 h-3.5 transition-transform duration-500 group-hover/reload:rotate-180" />
             </button>
@@ -654,11 +810,12 @@ export default function HomePage() {
               const Icon = item.icon;
               const isActive = activeNav === id;
               const isDragging = draggedTab === id;
+              const isPinned = id === "community"; // tab cố định: không kéo, không đóng
               return (
                 <div
                   key={id}
                   ref={(el) => { tabRefs.current[id] = el; }}
-                  onPointerDown={(e) => startTabDrag(id, e)}
+                  onPointerDown={(e) => { if (!isPinned) startTabDrag(id, e); }}
                   onClick={() => {
                     if (suppressTabClick.current) {
                       suppressTabClick.current = false;
@@ -667,10 +824,10 @@ export default function HomePage() {
                     setActiveNav(id);
                   }}
                   style={{ touchAction: "none" }}
-                  className={`group flex items-center gap-2 pl-3 pr-1.5 my-1.5 rounded-xl text-xs font-bold whitespace-nowrap border ${
+                  className={`group flex items-center gap-2 pl-3 ${isPinned ? "pr-3" : "pr-1.5"} my-1.5 rounded-xl text-xs font-bold whitespace-nowrap border ${
                     isDragging
                       ? "transition-none opacity-80 scale-[1.04] cursor-grabbing z-10 shadow-xl shadow-black/50"
-                      : "transition-all duration-200 cursor-grab"
+                      : `transition-all duration-200 ${isPinned ? "cursor-pointer" : "cursor-grab"}`
                   } ${
                     isActive
                       ? "bg-gradient-to-b from-violet-500/20 to-violet-500/5 border-violet-500/40 text-violet-100 shadow-[0_0_14px_rgba(139,92,246,0.18)]"
@@ -680,17 +837,20 @@ export default function HomePage() {
                 >
                   <Icon className="w-3.5 h-3.5 flex-shrink-0 pointer-events-none" />
                   <span className="pointer-events-none">{item.label}</span>
-                  <button
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeTab(id);
-                    }}
-                    className="w-5 h-5 rounded-lg flex items-center justify-center text-neutral-500 hover:text-white hover:bg-rose-500/25 transition-colors flex-shrink-0 cursor-pointer"
-                    title="Đóng"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
+                  {!isPinned && (
+                    <button
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(id);
+                      }}
+                      className="w-5 h-5 rounded-lg flex items-center justify-center text-neutral-500 hover:text-white hover:bg-rose-500/25 transition-colors flex-shrink-0 cursor-pointer"
+                      data-tip="Đóng"
+                      data-tip-pos="bottom"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -714,9 +874,9 @@ export default function HomePage() {
 
         {/* Main Content Area */}
         <div className="flex-1 min-h-0 min-w-0 relative z-10 flex flex-col p-0">
-        {activeNav === "home" ? (
-          /* Home App Dashboard */
-          <div className="flex-1 custom-scrollbar overflow-y-auto flex flex-col gap-8 text-neutral-200 px-7 pt-6 pb-8 animate-fade-in">
+          {/* Home App Dashboard — luôn mounted, chỉ ẩn/hiện để các tab phía dưới
+              không bị unmount (tránh reload lại từ đầu khi quay về trang chủ). */}
+          <div className={`flex-1 custom-scrollbar overflow-y-auto flex-col gap-8 text-neutral-200 px-7 pt-6 pb-8 animate-fade-in ${activeNav === "home" ? "flex" : "hidden"}`}>
             {/* Applications Grid Section */}
             <div className="flex flex-col gap-5">
               <SectionHeader icon={LayoutGrid} title="Ứng dụng hệ thống" subtitle="Khám phá các tính năng và công cụ tiện ích tích hợp" />
@@ -819,11 +979,12 @@ export default function HomePage() {
               </div>
             </div>
           </div>
-        ) : (
-          /* Sub-application View (Full-screen App Shell) */
-          <div className="flex-1 flex flex-col min-h-0 min-w-0 bg-[#070710] relative group/app animate-fade-in">
+
+          {/* Sub-application View (Full-screen App Shell) — luôn mounted, chỉ ẩn
+              khi đang ở trang chủ, để giữ nguyên trạng thái các tab đã mở. */}
+          <div className={`flex-1 min-h-0 min-w-0 bg-[#070710] relative group/app animate-fade-in ${activeNav === "home" ? "hidden" : "flex flex-col"}`}>
             {/* App Content Workspace */}
-            <div className={`flex-1 min-h-0 min-w-0 flex flex-col relative ${activeNav === "browser" ? "overflow-hidden" : (activeNav === "deals" ? "overflow-hidden px-6 py-4" : "overflow-y-auto px-6 py-4")}`}>
+            <div className={`flex-1 min-h-0 min-w-0 flex flex-col relative ${activeNav === "browser" || activeNav === "community" ? "overflow-hidden" : (activeNav === "deals" ? "overflow-hidden px-6 py-4" : "overflow-y-auto px-6 py-4")}`}>
               {visitedTabs.includes("valorant") && (
                 <div className={activeNav === "valorant" ? "flex flex-col flex-1 min-w-0" : "hidden"}>
                   <ValorantHub reloadKey={reloadKey} />
@@ -849,6 +1010,11 @@ export default function HomePage() {
                   <DiscordHub reloadKey={reloadKey} />
                 </div>
               )}
+              {visitedTabs.includes("community") && (
+                <div className={activeNav === "community" ? "flex flex-col flex-1 min-h-0 min-w-0" : "hidden"}>
+                  <CommunityHub reloadKey={reloadKey} />
+                </div>
+              )}
               {visitedTabs.includes("translation") && (
                 <div className={activeNav === "translation" ? "flex flex-col flex-1 min-w-0" : "hidden"}>
                   <TranslationHub reloadKey={reloadKey} />
@@ -866,7 +1032,6 @@ export default function HomePage() {
               )}
             </div>
           </div>
-        )}
         </div>
       </div>
 
@@ -886,6 +1051,16 @@ export default function HomePage() {
           onToggleNavbarCollapsed={toggleNavbarCollapsed}
           onClose={() => setShowSettings(false)}
         />
+      )}
+
+      {/* Cài đặt tài khoản cộng đồng (đổi tên + avatar có crop) */}
+      {showAccountSettings && communityUser && (
+        <CommunityAccountSettings onClose={() => setShowAccountSettings(false)} />
+      )}
+
+      {/* Ví xu (tổng quan + chuyển xu + lịch sử) */}
+      {showWallet && communityUser && (
+        <WalletModal onClose={() => setShowWallet(false)} />
       )}
 
       {/* Premium Auto-Updater Glassmorphic Modal */}

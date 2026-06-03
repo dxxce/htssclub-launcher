@@ -4,8 +4,10 @@ import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   User, Trash2, Check, RefreshCw, AlertCircle, Loader2,
-  LogIn, ExternalLink, Clock, Plus,
+  LogIn, LogOut, ExternalLink, Clock, Plus, FolderOpen, Hash, Copy,
 } from "lucide-react";
+import ContextMenu, { ContextMenuState } from "./ContextMenu";
+import { toast } from "./Toast";
 
 interface SteamAccount {
   steam_id: string;
@@ -14,7 +16,7 @@ interface SteamAccount {
   remember_password: boolean;
   most_recent: boolean;
   timestamp: number;
-  has_session?: boolean;
+  in_vdf?: boolean;
 }
 
 interface SteamAccountsProps {
@@ -28,12 +30,7 @@ export default function SteamAccounts({ reloadKey }: SteamAccountsProps) {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
-  const [status, setStatus] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
-
-  const showStatus = (type: "success" | "error" | "info", text: string) => {
-    setStatus({ type, text });
-    setTimeout(() => setStatus(null), 6000);
-  };
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
   const loadAvatars = useCallback(async (list: SteamAccount[]) => {
     const entries = await Promise.all(
@@ -64,7 +61,7 @@ export default function SteamAccounts({ reloadKey }: SteamAccountsProps) {
       } catch { /* ignore */ }
       loadAvatars(list);
     } catch (err: any) {
-      showStatus("error", "Lỗi tải tài khoản Steam: " + err.toString());
+      toast.error("Lỗi tải tài khoản Steam: " + err.toString());
     } finally {
       setLoading(false);
     }
@@ -78,15 +75,20 @@ export default function SteamAccounts({ reloadKey }: SteamAccountsProps) {
     if (actionLoading) return;
     setActionLoading(true);
     setSwitchingId(acc.steam_id);
-    showStatus("info", `Đang chuyển sang ${acc.persona_name || acc.account_name}... Steam sẽ khởi động lại.`);
+    const name = acc.persona_name || acc.account_name;
     try {
-      await invoke("switch_steam_account", { accountName: acc.account_name, steamId: acc.steam_id });
+      await toast.promise(
+        invoke("switch_steam_account", { accountName: acc.account_name, steamId: acc.steam_id }),
+        {
+          loading: `Đang chuyển sang ${name}... Steam sẽ khởi động lại.`,
+          success: `Đã chuyển sang ${acc.account_name}! Steam đang tự đăng nhập.`,
+          error: (e) => "Lỗi chuyển tài khoản: " + e.toString(),
+        }
+      );
       setActiveUser(acc.account_name);
-      showStatus("success", `Đã chuyển sang ${acc.account_name}! Steam đang tự đăng nhập.`);
       setTimeout(() => loadData(), 1500);
-    } catch (err: any) {
-      showStatus("error", err.toString());
-    } finally {
+    } catch { /* toast đã hiển thị lỗi */ }
+    finally {
       setActionLoading(false);
       setSwitchingId(null);
     }
@@ -96,20 +98,47 @@ export default function SteamAccounts({ reloadKey }: SteamAccountsProps) {
     const doRemove = async () => {
       setActionLoading(true);
       try {
-        await invoke("remove_steam_account", { steamId: acc.steam_id });
-        showStatus("success", "Đã gỡ tài khoản khỏi danh sách.");
+        await toast.promise(invoke("remove_steam_account", { steamId: acc.steam_id }), {
+          loading: "Đang gỡ tài khoản khỏi danh sách...",
+          success: "Đã gỡ tài khoản khỏi danh sách quản lý.",
+          error: (e) => e.toString(),
+        });
         await loadData();
-      } catch (err: any) {
-        showStatus("error", err.toString());
-      } finally {
-        setActionLoading(false);
-      }
+      } catch { /* ignore */ }
+      finally { setActionLoading(false); }
     };
     if (window.confirmCustom) {
       window.confirmCustom({
-        title: "Gỡ tài khoản Steam",
-        message: `Gỡ "${acc.account_name}" khỏi danh sách đăng nhập của Steam? (Không xoá dữ liệu game)`,
-        confirmText: "Gỡ tài khoản",
+        title: "Gỡ khỏi danh sách",
+        message: `Gỡ "${acc.account_name}" khỏi danh sách quản lý của app? (Không ảnh hưởng tới Steam, không xoá dữ liệu game)`,
+        confirmText: "Gỡ khỏi danh sách",
+        cancelText: "Hủy",
+        type: "danger",
+        onConfirm: doRemove,
+      });
+    } else {
+      doRemove();
+    }
+  };
+
+  const handleRemoveFromSteam = (acc: SteamAccount) => {
+    const doRemove = async () => {
+      setActionLoading(true);
+      try {
+        await toast.promise(invoke("remove_steam_from_vdf", { steamId: acc.steam_id }), {
+          loading: `Đang gỡ "${acc.account_name}" khỏi đăng nhập Steam...`,
+          success: `Đã gỡ "${acc.account_name}" khỏi màn hình đăng nhập Steam.`,
+          error: (e) => e.toString(),
+        });
+        await loadData();
+      } catch { /* ignore */ }
+      finally { setActionLoading(false); }
+    };
+    if (window.confirmCustom) {
+      window.confirmCustom({
+        title: "Gỡ khỏi Steam",
+        message: `Gỡ "${acc.account_name}" khỏi màn hình đăng nhập của Steam (loginusers.vdf)? Tài khoản vẫn còn trong danh sách quản lý và đăng nhập lại được. Không xoá dữ liệu game.`,
+        confirmText: "Gỡ khỏi Steam",
         cancelText: "Hủy",
         type: "danger",
         onConfirm: doRemove,
@@ -122,23 +151,97 @@ export default function SteamAccounts({ reloadKey }: SteamAccountsProps) {
   const handleLaunchSteam = async () => {
     try {
       await invoke("launch_steam");
-      showStatus("info", "Đang mở Steam...");
+      toast.info("Đang mở Steam...");
     } catch (err: any) {
-      showStatus("error", err.toString());
+      toast.error(err.toString());
     }
   };
 
   const handleAddAccount = async () => {
     if (actionLoading) return;
     setActionLoading(true);
-    showStatus("info", "Steam sẽ khởi động lại ở màn hình đăng nhập. Hãy đăng nhập tài khoản mới và tích 'Ghi nhớ mật khẩu'.");
     try {
-      await invoke("add_steam_account");
-      showStatus("success", "Đã mở Steam ở màn hình đăng nhập. Đăng nhập xong, bấm 'Tải lại' để thấy tài khoản mới.");
+      await toast.promise(invoke("add_steam_account"), {
+        loading: "Đang mở Steam ở màn hình đăng nhập...",
+        success: "Đã mở Steam. Đăng nhập tài khoản mới (nhớ tích 'Ghi nhớ mật khẩu'), xong bấm 'Tải lại'.",
+        error: (e) => e.toString(),
+      });
+    } catch { /* ignore */ }
+    finally { setActionLoading(false); }
+  };
+
+  const handleLogout = async () => {
+    if (actionLoading) return;
+    const doLogout = async () => {
+      setActionLoading(true);
+      try {
+        await toast.promise(invoke("logout_steam_account"), {
+          loading: "Đang đăng xuất & xoá tài khoản khỏi Steam...",
+          success: "Đã đăng xuất khỏi Steam. Đăng nhập lại tài khoản nào sẽ tự lưu lại vào danh sách.",
+          error: (e) => e.toString(),
+        });
+        setActiveUser(null);
+        setTimeout(() => loadData(), 1500);
+      } catch { /* ignore */ }
+      finally { setActionLoading(false); }
+    };
+    if (window.confirmCustom) {
+      window.confirmCustom({
+        title: "Đăng xuất Steam",
+        message: "Xoá tất cả tài khoản khỏi màn hình đăng nhập Steam và đăng xuất? Tài khoản nào đăng nhập lại sẽ tự xuất hiện lại trong danh sách.",
+        confirmText: "Đăng xuất",
+        cancelText: "Hủy",
+        type: "warning",
+        onConfirm: doLogout,
+      });
+    } else {
+      doLogout();
+    }
+  };
+
+  const handleOpenFolder = async (acc: SteamAccount) => {
+    try {
+      await invoke("open_steam_userdata", { steamId: acc.steam_id });
     } catch (err: any) {
-      showStatus("error", err.toString());
-    } finally {
-      setActionLoading(false);
+      toast.error(err.toString());
+    }
+  };
+
+  const handleCopySteamId = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      toast.success("Đã sao chép SteamID64.");
+    } catch {
+      toast.error("Không sao chép được.");
+    }
+  };
+
+  const openContextMenu = (e: React.MouseEvent, acc: SteamAccount) => {
+    e.preventDefault();
+    const active = isActive(acc);
+    const items: ContextMenuState["items"] = [];
+
+    if (!active) {
+      items.push({ label: "Đăng nhập tài khoản này", icon: LogIn, accent: "sky", onClick: () => handleSwitch(acc) });
+    }
+    items.push({ label: "Mở thư mục userdata", icon: FolderOpen, onClick: () => handleOpenFolder(acc) });
+    items.push({ label: "Sao chép SteamID64", icon: Copy, onClick: () => handleCopySteamId(acc.steam_id) });
+    items.push({ type: "separator" });
+    if (acc.in_vdf && !active) {
+      items.push({ label: "Gỡ khỏi đăng nhập Steam", icon: LogOut, accent: "amber", onClick: () => handleRemoveFromSteam(acc) });
+    }
+    items.push({ label: "Gỡ khỏi danh sách app", icon: Trash2, danger: true, onClick: () => handleRemove(acc) });
+
+    setMenu({ x: e.clientX, y: e.clientY, header: acc.persona_name || acc.account_name, items });
+  };
+
+  // SteamID3 (account id) = SteamID64 - 76561197960265728
+  const steam3 = (id64: string) => {
+    try {
+      const v = BigInt(id64) - BigInt("76561197960265728");
+      return v >= BigInt(0) ? v.toString() : id64;
+    } catch {
+      return id64;
     }
   };
 
@@ -162,18 +265,6 @@ export default function SteamAccounts({ reloadKey }: SteamAccountsProps) {
 
   return (
     <div className="flex flex-col h-full w-full mt-6 select-none animate-fadeIn">
-      {/* Status banner */}
-      {status && (
-        <div className={`flex items-start gap-3 p-4 rounded-xl border mb-6 text-sm transition-all duration-300 ${
-          status.type === "success" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" :
-          status.type === "error" ? "bg-red-500/10 border-red-500/20 text-red-400" :
-          "bg-sky-500/10 border-sky-500/20 text-sky-400"
-        }`}>
-          {status.type === "info" ? <Loader2 className="w-4 h-4 mt-0.5 animate-spin flex-shrink-0" /> : <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />}
-          <span className="font-semibold leading-relaxed">{status.text}</span>
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3">
@@ -194,6 +285,15 @@ export default function SteamAccounts({ reloadKey }: SteamAccountsProps) {
             <Plus className="w-4 h-4" /> Thêm tài khoản
           </button>
           <button
+            onClick={handleLogout}
+            disabled={actionLoading}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 hover:border-amber-500/30 transition-colors cursor-pointer text-xs font-bold"
+            data-tip="Gỡ tất cả tài khoản khỏi đăng nhập Steam"
+            data-tip-pos="bottom"
+          >
+            <LogOut className="w-4 h-4" /> Đăng xuất tất cả
+          </button>
+          <button
             onClick={handleLaunchSteam}
             disabled={actionLoading}
             className="flex items-center gap-2 px-3 py-2 rounded-xl bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/20 hover:border-sky-500/30 transition-colors cursor-pointer text-xs font-bold"
@@ -204,7 +304,8 @@ export default function SteamAccounts({ reloadKey }: SteamAccountsProps) {
             onClick={() => loadData(true)}
             disabled={actionLoading || loading}
             className="p-2 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 text-neutral-400 hover:text-white transition-colors cursor-pointer"
-            title="Tải lại"
+            data-tip="Tải lại danh sách"
+            data-tip-pos="bottom"
           >
             <RefreshCw className={`w-4 h-4 ${actionLoading || loading ? "animate-spin" : ""}`} />
           </button>
@@ -230,22 +331,24 @@ export default function SteamAccounts({ reloadKey }: SteamAccountsProps) {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           {accounts.map((acc) => {
             const active = isActive(acc);
             const switching = switchingId === acc.steam_id;
             return (
               <div
                 key={acc.steam_id}
-                className={`relative rounded-2xl overflow-hidden border transition-all duration-300 p-5 flex items-center justify-between gap-4 ${
+                onContextMenu={(e) => openContextMenu(e, acc)}
+                className={`group relative rounded-2xl border transition-all duration-300 p-4 flex flex-col gap-3 ${
                   active
-                    ? "border-emerald-500/30 bg-emerald-500/[0.03] shadow-[0_0_20px_rgba(16,185,129,0.06)]"
-                    : "border-white/5 bg-white/[0.02] hover:border-white/10"
+                    ? "border-emerald-500/30 bg-emerald-500/[0.04] shadow-[0_0_24px_rgba(16,185,129,0.07)]"
+                    : "border-white/5 bg-white/[0.02] hover:border-white/15 hover:bg-white/[0.035]"
                 }`}
               >
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className={`relative w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center border flex-shrink-0 ${
-                    active ? "border-emerald-500/30" : "border-white/10"
+                {/* Top: avatar + identity + status */}
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <div className={`relative w-12 h-12 rounded-xl overflow-hidden flex items-center justify-center border flex-shrink-0 ${
+                    active ? "border-emerald-500/40" : "border-white/10"
                   }`}>
                     {avatars[acc.steam_id] ? (
                       <img src={avatars[acc.steam_id]} alt="" className="w-full h-full object-cover" />
@@ -255,60 +358,89 @@ export default function SteamAccounts({ reloadKey }: SteamAccountsProps) {
                       </div>
                     )}
                     {active && (
-                      <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-emerald-500 border-2 border-[#070710] flex items-center justify-center">
+                      <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-emerald-500 border-2 border-[#0b0b14] flex items-center justify-center">
                         <Check className="w-3 h-3 text-black" strokeWidth={3} />
                       </div>
                     )}
                   </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-black text-white text-base truncate">{acc.persona_name || acc.account_name}</h3>
-                      {acc.most_recent && !active && (
-                        <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-400 border border-sky-500/20 tracking-wider flex-shrink-0">GẦN ĐÂY</span>
-                      )}
-                      {!acc.has_session && (
-                        <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 tracking-wider flex-shrink-0">CẦN ĐĂNG NHẬP LẠI</span>
-                      )}
-                    </div>
-                    <p className="text-xs text-neutral-500 mt-0.5 truncate">{acc.account_name}</p>
-                    <div className="flex items-center gap-1.5 mt-1 text-[10px] text-neutral-600">
-                      <Clock className="w-3 h-3" />
-                      <span>{formatTime(acc.timestamp)}</span>
-                      {!acc.has_session && (
-                        <span className="text-amber-500/80 ml-1">• Phiên đã hết, sẽ cần nhập mật khẩu</span>
-                      )}
-                    </div>
+
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-black text-white text-base truncate leading-tight">{acc.persona_name || acc.account_name}</h3>
+                    <p className="text-xs text-neutral-500 truncate">{acc.account_name}</p>
                   </div>
+
+                  {/* Status badge */}
+                  {active ? (
+                    <span className="text-[9px] font-black px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 tracking-wider flex-shrink-0">ĐANG DÙNG</span>
+                  ) : acc.in_vdf ? (
+                    <span className="text-[9px] font-black px-2.5 py-1 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 tracking-wider flex-shrink-0">CÓ TRÊN STEAM</span>
+                  ) : (
+                    <span className="text-[9px] font-black px-2.5 py-1 rounded-full bg-neutral-500/10 text-neutral-400 border border-neutral-500/20 tracking-wider flex-shrink-0">ĐÃ LƯU</span>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => handleRemove(acc)}
-                    disabled={actionLoading}
-                    className="p-2.5 bg-red-500/5 hover:bg-red-500/15 text-red-400 rounded-xl border border-red-500/10 hover:border-red-500/20 transition-all cursor-pointer disabled:opacity-50"
-                    title="Gỡ khỏi danh sách"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                {/* Meta info */}
+                <div className="flex items-center gap-3 text-[10px] text-neutral-600 pl-0.5">
+                  <span className="flex items-center gap-1" data-tip="SteamID3 (account id)">
+                    <Hash className="w-3 h-3" />
+                    {steam3(acc.steam_id)}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {formatTime(acc.timestamp)}
+                  </span>
+                </div>
+
+                {/* Divider */}
+                <div className="h-px bg-white/5" />
+
+                {/* Action bar */}
+                <div className="flex items-center justify-between gap-2">
+                  {/* Primary action */}
                   {active ? (
-                    <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-black">
-                      <Check className="w-3.5 h-3.5" /> ĐANG DÙNG
+                    <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-black">
+                      <Check className="w-3.5 h-3.5" /> Đang sử dụng
                     </div>
                   ) : (
                     <button
                       onClick={() => handleSwitch(acc)}
                       disabled={actionLoading}
-                      className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer disabled:opacity-50 ${
-                        acc.has_session
-                          ? "bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border-sky-500/20 hover:border-sky-500/30"
-                          : "bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20 hover:border-amber-500/30"
-                      }`}
-                      title={acc.has_session ? "Đăng nhập thẳng tài khoản này" : "Mở Steam để đăng nhập lại tài khoản này"}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer disabled:opacity-50 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border-sky-500/25 hover:border-sky-500/40"
                     >
                       {switching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogIn className="w-3.5 h-3.5" />}
-                      {acc.has_session ? "Chuyển sang" : "Đăng nhập lại"}
+                      Đăng nhập
                     </button>
                   )}
+
+                  {/* Icon toolbar */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleOpenFolder(acc)}
+                      disabled={actionLoading}
+                      className="p-2 bg-white/[0.03] hover:bg-white/[0.08] text-neutral-400 hover:text-white rounded-lg border border-white/5 hover:border-white/10 transition-all cursor-pointer disabled:opacity-50"
+                      data-tip="Mở thư mục userdata"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                    </button>
+                    {acc.in_vdf && !active && (
+                      <button
+                        onClick={() => handleRemoveFromSteam(acc)}
+                        disabled={actionLoading}
+                        className="p-2 bg-amber-500/5 hover:bg-amber-500/15 text-amber-400 rounded-lg border border-amber-500/10 hover:border-amber-500/20 transition-all cursor-pointer disabled:opacity-50"
+                        data-tip="Gỡ khỏi đăng nhập Steam"
+                      >
+                        <LogOut className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleRemove(acc)}
+                      disabled={actionLoading}
+                      className="p-2 bg-red-500/5 hover:bg-red-500/15 text-red-400 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-all cursor-pointer disabled:opacity-50"
+                      data-tip="Gỡ khỏi danh sách app"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -320,9 +452,12 @@ export default function SteamAccounts({ reloadKey }: SteamAccountsProps) {
       <div className="mt-6 flex items-start gap-2.5 p-4 rounded-xl bg-white/[0.02] border border-white/5">
         <AlertCircle className="w-4 h-4 text-neutral-500 mt-0.5 flex-shrink-0" />
         <p className="text-xs text-neutral-500 leading-relaxed">
-          Khi bấm "Chuyển sang", Steam sẽ tự tắt rồi mở lại đăng nhập tài khoản đã chọn. Chỉ tài khoản còn phiên đăng nhập (đã đăng nhập gần đây với "Ghi nhớ mật khẩu") mới vào thẳng được. Tài khoản gắn nhãn "Cần đăng nhập lại" sẽ mở Steam ra màn hình nhập mật khẩu — đăng nhập một lần là lần sau chuyển nhanh được.
+          Tài khoản đang đăng nhập hiển thị ở đầu danh sách. Nhãn <span className="text-sky-400 font-semibold">CÓ TRÊN STEAM</span> = đang lưu trong loginusers.vdf, <span className="text-neutral-300 font-semibold">ĐÃ LƯU</span> = chỉ còn trong danh sách app.
+          Các nút: <span className="text-neutral-300 font-semibold">📁 mở thư mục userdata</span>, <span className="text-amber-400 font-semibold">⤴ gỡ khỏi đăng nhập Steam</span>, <span className="text-red-400 font-semibold">🗑 gỡ khỏi danh sách app</span>. "Đăng xuất tất cả" gỡ mọi tài khoản khỏi Steam. <span className="text-neutral-400">Chuột phải vào thẻ tài khoản để mở thêm tùy chọn.</span>
         </p>
       </div>
+
+      <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }
