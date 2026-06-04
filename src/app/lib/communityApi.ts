@@ -101,6 +101,122 @@ export interface LeaderboardEntry {
   score: number; // theo `type` (xp / coins / rank)
 }
 
+// ── Caro (cờ caro 1v1 / Gomoku) ──────────────────────────────────────────────
+export type CaroMark = 0 | 1 | 2;             // 0 trống, 1 = X, 2 = O
+export type CaroStatus = "ACTIVE" | "FINISHED" | "ABORTED";
+export type CaroEndReason = "WIN" | "RESIGN" | "TIMEOUT" | "DISCONNECT" | "DRAW" | "ABORTED" | null;
+export type GameMode = "RANKED" | "WAGER" | "CASUAL";
+
+export interface CaroPlayer {
+  id: string;
+  username?: string;
+  displayName?: string;
+  avatarUrl?: string;
+  level?: number;
+  levelStyle?: LevelStyle;
+  rank?: RankInfo;
+  rankPoints?: number;
+}
+export interface CaroMove {
+  by: number;      // mark người đi (1|2)
+  row: number;
+  col: number;
+  at?: string;
+}
+// Trạng thái đầy đủ của 1 ván (trả ở ack / REST / event).
+export interface CaroGame {
+  id: string;
+  boardSize: number;                 // 15
+  board: CaroMark[];                 // mảng phẳng boardSize*boardSize
+  moves: CaroMove[];
+  turn: 1 | 2;                       // 1 = X đi, 2 = O đi
+  status: CaroStatus;
+  ranked: boolean;
+  mode?: GameMode;                   // RANKED | WAGER | CASUAL
+  betAmount?: number;                // xu mỗi người cược (WAGER)
+  pot?: number;                      // tổng cược (người thắng lấy hết)
+  roomId?: string | null;
+  players: { X?: CaroPlayer; O?: CaroPlayer };
+  winner: string | null;             // userId người thắng
+  endReason: CaroEndReason;
+  winningLine: number[] | null;      // chỉ số phẳng 5 ô thắng
+  rpChange: Record<string, number> | null; // RP +/- mỗi userId
+  turnSeconds: number;               // 30
+}
+
+// ── Phòng game (lobby) — dùng chung cho Caro (WAGER/CASUAL) và Tiến Lên ───────
+export type RoomStatus = "WAITING" | "STARTING" | "IN_PROGRESS" | "CLOSED";
+export interface GameRoomMember {
+  userId: string;
+  user?: CommunityUser;
+  ready: boolean;
+  isHost: boolean;
+}
+export interface GameRoom {
+  id: string;
+  game: "CARO" | "TIENLEN";
+  mode: GameMode;
+  code?: string;
+  isPrivate: boolean;
+  name?: string;
+  hostId: string;
+  betAmount: number;
+  pot: number;
+  minPlayers: number;
+  maxPlayers: number;
+  status: RoomStatus;
+  gameId?: string | null;
+  members: GameRoomMember[];
+}
+
+// ── Tiến Lên Miền Nam ─────────────────────────────────────────────────────────
+export type TienLenStatus = "ACTIVE" | "FINISHED" | "ABORTED";
+export type TienLenComboType = "SINGLE" | "PAIR" | "TRIPLE" | "STRAIGHT" | "PAIR_STRAIGHT" | "FOUR" | null;
+export interface TienLenPlayer {
+  seat: number;
+  userId: string;
+  user?: CommunityUser;
+  handCount: number;
+  passed: boolean;
+  connected: boolean;
+  place: number | null;             // thứ hạng về đích (1=nhất), null nếu chưa
+  hand?: number[];                  // chỉ có ở chính mình
+}
+export interface TienLenInstantWin {
+  userId: string;
+  kind: "TU_QUY_HEO" | "SANH_RONG" | "SAU_DOI" | "NAM_DOI_THONG" | string;
+}
+export interface TienLenChop {
+  chopper: string;
+  victim: string;
+  heoCount: number;
+  coins?: number;
+  rp?: number;
+}
+export interface TienLenGame {
+  id: string;
+  mode: GameMode;
+  betAmount: number;
+  pot: number;
+  roomId?: string | null;
+  status: TienLenStatus;
+  turn: number;                     // seat đang tới lượt
+  turnSeconds: number;
+  openingCard?: number;             // lá thấp nhất được chia; nước mở đầu phải chứa lá này
+  currentCombo: number[];           // bộ trên bàn ([] = tự do ra)
+  currentComboType: TienLenComboType;
+  leadSeat: number;
+  finishOrder: number[];            // seat về đích lần lượt
+  rpChange: Record<string, number> | null;
+  coinChange: Record<string, number> | null;
+  players: TienLenPlayer[];
+  myHand: number[];                 // bài của chính người gọi
+  instantWin?: TienLenInstantWin | null;
+  chops?: TienLenChop[];
+}
+
+
+
 export interface AuthResult {
   accessToken: string;
   user: CommunityUser;
@@ -864,6 +980,159 @@ export const leaderboardApi = {
     return get<any>(`/leaderboard/me?type=${type}`).then((d) => normalizeLeaderboardEntry(d?.data ?? d));
   },
 };
+
+// ── Caro (cờ caro 1v1) ────────────────────────────────────────────────────────
+export function normalizeCaroGame(g: any): CaroGame | null {
+  if (!g || typeof g !== "object") return null;
+  const d = g.data ?? g;
+  if (!d || !d.id) return null;
+  const size = typeof d.boardSize === "number" ? d.boardSize : 15;
+  const player = (p: any): CaroPlayer | undefined =>
+    p ? { id: normId(p.id ?? p._id), username: p.username, displayName: p.displayName, avatarUrl: p.avatarUrl, level: typeof p.level === "number" ? p.level : undefined, levelStyle: normalizeLevelStyle(p.levelStyle ?? p.style), rank: p.rank ? normalizeRank(p.rank) : undefined, rankPoints: typeof p.rankPoints === "number" ? p.rankPoints : undefined } : undefined;
+  return {
+    id: normId(d.id ?? d._id),
+    boardSize: size,
+    board: Array.isArray(d.board) ? d.board.map((c: any) => (c === 1 || c === 2 ? c : 0)) as CaroMark[] : new Array(size * size).fill(0),
+    moves: Array.isArray(d.moves) ? d.moves.map((m: any) => ({ by: m.by, row: m.row, col: m.col, at: m.at })) : [],
+    turn: d.turn === 2 ? 2 : 1,
+    status: (d.status === "FINISHED" || d.status === "ABORTED" ? d.status : "ACTIVE") as CaroStatus,
+    ranked: !!d.ranked,
+    players: { X: player(d.players?.X), O: player(d.players?.O) },
+    winner: d.winner ? normId(d.winner) : null,
+    endReason: (d.endReason ?? null) as CaroEndReason,
+    winningLine: Array.isArray(d.winningLine) ? d.winningLine : null,
+    rpChange: d.rpChange && typeof d.rpChange === "object" ? d.rpChange : null,
+    turnSeconds: typeof d.turnSeconds === "number" ? d.turnSeconds : 30,
+    mode: (d.mode as GameMode) ?? (d.ranked ? "RANKED" : "CASUAL"),
+    betAmount: typeof d.betAmount === "number" ? d.betAmount : 0,
+    pot: typeof d.pot === "number" ? d.pot : 0,
+    roomId: d.roomId ? normId(d.roomId) : null,
+  };
+}
+
+// Chuẩn hoá phòng game (lobby) — dùng chung Caro + Tiến Lên.
+export function normalizeGameRoom(r: any): GameRoom | null {
+  if (!r || typeof r !== "object") return null;
+  const d = r.data ?? r;
+  if (!d || !d.id) return null;
+  return {
+    id: normId(d.id ?? d._id),
+    game: d.game === "TIENLEN" ? "TIENLEN" : "CARO",
+    mode: (d.mode as GameMode) ?? "CASUAL",
+    code: d.code,
+    isPrivate: !!d.isPrivate,
+    name: d.name,
+    hostId: normId(d.hostId ?? d.host),
+    betAmount: typeof d.betAmount === "number" ? d.betAmount : 0,
+    pot: typeof d.pot === "number" ? d.pot : 0,
+    minPlayers: typeof d.minPlayers === "number" ? d.minPlayers : 2,
+    maxPlayers: typeof d.maxPlayers === "number" ? d.maxPlayers : 2,
+    status: (d.status as RoomStatus) ?? "WAITING",
+    gameId: d.gameId ? normId(d.gameId) : null,
+    members: Array.isArray(d.members) ? d.members.map((m: any) => ({
+      userId: normId(m.userId ?? m.user?.id ?? m.user),
+      user: normalizeUser(m.user),
+      ready: !!m.ready,
+      isHost: !!m.isHost,
+    })) : [],
+  };
+}
+
+// Chuẩn hoá ván Tiến Lên.
+export function normalizeTienLenGame(g: any): TienLenGame | null {
+  if (!g || typeof g !== "object") return null;
+  const d = g.data ?? g;
+  if (!d || !d.id) return null;
+  return {
+    id: normId(d.id ?? d._id),
+    mode: (d.mode as GameMode) ?? "CASUAL",
+    betAmount: typeof d.betAmount === "number" ? d.betAmount : 0,
+    pot: typeof d.pot === "number" ? d.pot : 0,
+    roomId: d.roomId ? normId(d.roomId) : null,
+    status: (d.status === "FINISHED" || d.status === "ABORTED" ? d.status : "ACTIVE") as TienLenStatus,
+    turn: typeof d.turn === "number" ? d.turn : 0,
+    turnSeconds: typeof d.turnSeconds === "number" ? d.turnSeconds : 30,
+    openingCard: typeof d.openingCard === "number" ? d.openingCard : undefined,
+    currentCombo: Array.isArray(d.currentCombo) ? d.currentCombo : [],
+    currentComboType: (d.currentComboType ?? null) as TienLenComboType,
+    leadSeat: typeof d.leadSeat === "number" ? d.leadSeat : 0,
+    finishOrder: Array.isArray(d.finishOrder) ? d.finishOrder : [],
+    rpChange: d.rpChange && typeof d.rpChange === "object" ? d.rpChange : null,
+    coinChange: d.coinChange && typeof d.coinChange === "object" ? d.coinChange : null,
+    players: Array.isArray(d.players) ? d.players.map((p: any) => ({
+      seat: typeof p.seat === "number" ? p.seat : 0,
+      userId: normId(p.userId ?? p.user?.id ?? p.user),
+      user: normalizeUser(p.user),
+      handCount: typeof p.handCount === "number" ? p.handCount : (Array.isArray(p.hand) ? p.hand.length : 0),
+      passed: !!p.passed,
+      connected: p.connected !== false,
+      place: typeof p.place === "number" ? p.place : null,
+      hand: Array.isArray(p.hand) ? p.hand : undefined,
+    })) : [],
+    myHand: Array.isArray(d.myHand) ? d.myHand : [],
+    instantWin: d.instantWin ?? null,
+    chops: Array.isArray(d.chops) ? d.chops : [],
+  };
+}
+
+export const caroApi = {
+  // Trận ACTIVE hiện tại của tôi (để reconnect) — null nếu không có.
+  active() {
+    return get<any>("/games/caro/active").then((d) => normalizeCaroGame(d?.data ?? d));
+  },
+  history(limit = 20) {
+    return get<any>(`/games/caro/history?limit=${limit}`).then((raw) =>
+      extractList(raw?.data ?? raw).map(normalizeCaroGame).filter(Boolean) as CaroGame[]
+    );
+  },
+  get(gameId: string) {
+    return get<any>(`/games/caro/${gameId}`).then((d) => normalizeCaroGame(d?.data ?? d));
+  },
+  // Phòng (WAGER/CASUAL).
+  rooms() {
+    return get<any>("/games/caro/rooms").then((raw) =>
+      extractList(raw?.data ?? raw).map(normalizeGameRoom).filter(Boolean) as GameRoom[]
+    );
+  },
+  myRoom() {
+    return get<any>("/games/caro/rooms/mine").then((d) => normalizeGameRoom(d?.data ?? d));
+  },
+  room(roomId: string) {
+    return get<any>(`/games/caro/rooms/${roomId}`).then((d) => normalizeGameRoom(d?.data ?? d));
+  },
+  roomByCode(code: string) {
+    return get<any>(`/games/caro/rooms/code/${encodeURIComponent(code)}`).then((d) => normalizeGameRoom(d?.data ?? d));
+  },
+};
+
+export const tienlenApi = {
+  active() {
+    return get<any>("/games/tienlen/active").then((d) => normalizeTienLenGame(d?.data ?? d));
+  },
+  history(limit = 20) {
+    return get<any>(`/games/tienlen/history?limit=${limit}`).then((raw) =>
+      extractList(raw?.data ?? raw).map(normalizeTienLenGame).filter(Boolean) as TienLenGame[]
+    );
+  },
+  get(gameId: string) {
+    return get<any>(`/games/tienlen/${gameId}`).then((d) => normalizeTienLenGame(d?.data ?? d));
+  },
+  rooms() {
+    return get<any>("/games/tienlen/rooms").then((raw) =>
+      extractList(raw?.data ?? raw).map(normalizeGameRoom).filter(Boolean) as GameRoom[]
+    );
+  },
+  myRoom() {
+    return get<any>("/games/tienlen/rooms/mine").then((d) => normalizeGameRoom(d?.data ?? d));
+  },
+  room(roomId: string) {
+    return get<any>(`/games/tienlen/rooms/${roomId}`).then((d) => normalizeGameRoom(d?.data ?? d));
+  },
+  roomByCode(code: string) {
+    return get<any>(`/games/tienlen/rooms/code/${encodeURIComponent(code)}`).then((d) => normalizeGameRoom(d?.data ?? d));
+  },
+};
+
 
 // ── Wallet ─────────────────────────────────────────────────────────────────────
 export const walletApi = {

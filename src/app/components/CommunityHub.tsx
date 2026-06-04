@@ -8,7 +8,7 @@ import {
   UserPlus, Smile, ChevronLeft, ChevronRight, ImagePlus, FileText, Download, Pencil, GripVertical,
   Paperclip, FileVideo, FileAudio, Bold, Italic, Strikethrough, Code, Link2, Quote, List, Eye, EyeOff, Reply, SmilePlus,
   ScreenShare, ScreenShareOff, Video, Maximize2, Minimize2, MonitorPlay, Camera,
-  Users2, MessageCircle, Check, Trophy,
+  Users2, MessageCircle, Check, Trophy, Swords, Spade,
 } from "lucide-react";
 import { useCommunityStore } from "../store/useCommunityStore";
 import { useVoiceStore, type VoiceParticipantState } from "../store/useVoiceStore";
@@ -21,10 +21,16 @@ import UserProfileModal from "./UserProfileModal";
 import FriendsView from "./FriendsView";
 import MessagesView from "./MessagesView";
 import LeaderboardView from "./LeaderboardView";
+import CaroView from "./CaroView";
+import CaroChallengePopup from "./CaroChallengePopup";
+import TienLenView from "./TienLenView";
+import TienLenChallengePopup from "./TienLenChallengePopup";
 import LevelUpOverlay from "./LevelUpOverlay";
 import LevelBadge, { levelNameStyle, levelColors } from "./LevelBadge";
 import RankBadge from "./RankBadge";
 import { useDmStore } from "../store/useDmStore";
+import { useCaroStore } from "../store/useCaroStore";
+import { useTienLenStore } from "../store/useTienLenStore";
 import { useLevelStore } from "../store/useLevelStore";
 import WalletModal from "./WalletModal";
 import VoiceSettingsModal from "./VoiceSettingsModal";
@@ -288,7 +294,7 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [showSharePicker, setShowSharePicker] = useState(false);
   // View switcher: cộng đồng (server/chat) | bạn bè | tin nhắn | bảng xếp hạng.
-  const [view, setView] = useState<"community" | "friends" | "messages" | "leaderboard">("community");
+  const [view, setView] = useState<"community" | "friends" | "messages" | "leaderboard" | "caro" | "tienlen">("community");
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -320,7 +326,29 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
     const lv = useLevelStore.getState();
     lv.bindRealtime();
     lv.loadMyLevel();
+    // Caro: kết nối + bind realtime + nối lại trận đang chơi (nhận caro:matched
+    // dù đang ở view khác → tự chuyển sang khu game).
+    const cr = useCaroStore.getState();
+    cr.connect();
+    cr.resumeActive();
+    // Tiến Lên: tương tự.
+    const tls = useTienLenStore.getState();
+    tls.connect();
+    tls.resumeActive();
   }, [user]);
+
+  // Khi được ghép trận / thách đấu (kể cả đang ở view khác) → tự mở khu game tương ứng.
+  const caroGameId = useCaroStore((s) => s.game?.id);
+  const caroPlaying = useCaroStore((s) => s.phase === "playing");
+  useEffect(() => {
+    if (caroPlaying && caroGameId) setView("caro");
+  }, [caroGameId, caroPlaying]);
+
+  const tlGameId = useTienLenStore((s) => s.game?.id);
+  const tlPlaying = useTienLenStore((s) => s.phase === "playing");
+  useEffect(() => {
+    if (tlPlaying && tlGameId) setView("tienlen");
+  }, [tlGameId, tlPlaying]);
 
   useEffect(() => {
     if (reloadKey && user) refreshMe();
@@ -730,15 +758,19 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
               view === "community" ? "bg-gradient-to-br from-violet-600 to-fuchsia-600"
               : view === "friends" ? "bg-gradient-to-br from-emerald-600 to-teal-600"
               : view === "leaderboard" ? "bg-gradient-to-br from-amber-500 to-orange-600"
+              : view === "caro" ? "bg-gradient-to-br from-rose-600 to-fuchsia-600"
+              : view === "tienlen" ? "bg-gradient-to-br from-emerald-600 to-teal-600"
               : "bg-gradient-to-br from-sky-600 to-indigo-600"
             }`}>
               {view === "community" ? <Sparkles className="w-4 h-4 text-white" />
                 : view === "friends" ? <Users2 className="w-4 h-4 text-white" />
                 : view === "leaderboard" ? <Trophy className="w-4 h-4 text-white" />
+                : view === "caro" ? <Swords className="w-4 h-4 text-white" />
+                : view === "tienlen" ? <Spade className="w-4 h-4 text-white" />
                 : <MessageCircle className="w-4 h-4 text-white" />}
             </div>
             <span className="text-[13px] font-black text-white hidden md:block">
-              {view === "community" ? "Cộng đồng" : view === "friends" ? "Bạn bè" : view === "leaderboard" ? "Xếp hạng" : "Tin nhắn"}
+              {view === "community" ? "Cộng đồng" : view === "friends" ? "Bạn bè" : view === "leaderboard" ? "Xếp hạng" : view === "caro" ? "Cờ Caro" : view === "tienlen" ? "Tiến Lên" : "Tin nhắn"}
             </span>
             {dmUnread > 0 && view !== "messages" && (
               <span className="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center">{dmUnread > 99 ? "99+" : dmUnread}</span>
@@ -756,6 +788,8 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
                   { id: "friends", label: "Bạn bè", desc: "Danh sách & lời mời", Icon: Users2, grad: "from-emerald-600 to-teal-600" },
                   { id: "messages", label: "Tin nhắn", desc: "Nhắn riêng 1-1", Icon: MessageCircle, grad: "from-sky-600 to-indigo-600" },
                   { id: "leaderboard", label: "Bảng xếp hạng", desc: "Cấp độ & xu", Icon: Trophy, grad: "from-amber-500 to-orange-600" },
+                  { id: "caro", label: "Cờ Caro", desc: "Đấu 1v1 xếp hạng", Icon: Swords, grad: "from-rose-600 to-fuchsia-600" },
+                  { id: "tienlen", label: "Tiến Lên", desc: "Bài 2-4 người, cược xu", Icon: Spade, grad: "from-emerald-600 to-teal-600" },
                 ] as const).map(({ id, label, desc, Icon, grad }) => (
                   <button
                     key={id}
@@ -847,6 +881,10 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
         <MessagesView onOpenProfile={openProfile} onOpenWallet={() => setWalletTarget(null)} />
       ) : view === "leaderboard" ? (
         <LeaderboardView onOpenProfile={openProfile} />
+      ) : view === "caro" ? (
+        <CaroView onOpenProfile={openProfile} />
+      ) : view === "tienlen" ? (
+        <TienLenView onOpenProfile={openProfile} />
       ) : (
       <div className="flex flex-1 min-h-0">
         {/* ── Sidebar kênh ── */}
@@ -1526,6 +1564,12 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
       {/* Hiệu ứng Level Up toàn cục */}
       <LevelUpOverlay />
 
+      {/* Lời mời thách đấu cờ caro (toàn cục) */}
+      <CaroChallengePopup />
+
+      {/* Lời mời thách đấu Tiến Lên (toàn cục) */}
+      <TienLenChallengePopup />
+
       {/* Cài đặt tài khoản */}
       {showAccountSettings && <CommunityAccountSettings onClose={() => setShowAccountSettings(false)} />}
 
@@ -1557,6 +1601,8 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
           onClose={() => setProfileId(null)}
           onTransfer={(u) => { setProfileId(null); setWalletTarget(u); }}
           onMessage={(u) => { setProfileId(null); setView("messages"); useDmStore.getState().openConversation(u); }}
+          onChallenge={(u) => { setProfileId(null); useCaroStore.getState().challenge(u); }}
+          onChallengeTienLen={(u) => { setProfileId(null); useTienLenStore.getState().challenge(u, { ranked: true }); }}
         />
       )}
 

@@ -1,4 +1,66 @@
-### 👾 Bản cập nhật v0.9.17
+### 👾 Bản cập nhật v0.9.21
+
+**🎮 Game — giao diện & âm thanh**
+- Thiết kế lại màn thắng/thua/hoà hoành tráng cho cả Cờ Caro và Tiến Lên (cúp, hiệu ứng ánh sáng, hiện rõ +/- RP và xu).
+- Bàn cờ Caro và bàn Tiến Lên to hơn, lá bài rõ hơn.
+- Thẻ người chơi tại bàn (cả 2 game) hiện đầy đủ: tên màu theo cấp độ, huy hiệu Cấp độ + Hạng, và điểm RP.
+- Thêm âm thanh riêng cho game: tìm thấy trận, có người vào phòng, tới lượt, đánh bài/đặt quân, chặt heo, thắng/thua/hoà.
+
+**🛠️ Cải thiện**
+- Hiệu ứng chặt heo hiện chi tiết heo đen / heo đỏ và số xu (heo đỏ gấp đôi heo đen).
+
+### 👾 Bản cập nhật v0.9.20
+
+**🃏 Tiến Lên — nâng cấp giao diện**
+- Bàn chơi rộng hơn, lá bài to và rõ hơn (cả bài trên tay lẫn bài trên bàn).
+- Thẻ người chơi tại bàn hiện đầy đủ: tên theo màu cấp độ, huy hiệu Cấp độ + Hạng, điểm RP, số lá còn lại.
+- Gợi ý lá mở đầu ván đúng theo bài được chia (không cố định 3♠ ở bàn ít người).
+
+**🛠️ Cải thiện**
+- Thông báo lỗi rõ ràng hơn khi vào phòng sai mã / nước đi không hợp lệ.
+- Hỗ trợ tra cứu phòng theo mã trước khi tham gia.
+
+### 👾 Bản cập nhật v0.9.19
+
+**🃏 Tiến Lên Miền Nam (mới)**
+- Thêm trò chơi bài Tiến Lên 2-4 người: tìm trận nhanh theo số người, tạo/vào phòng bằng mã.
+- Chế độ xếp hạng (ăn/trừ RP theo thứ hạng) và chế độ cược xu (về nhất ăn toàn bộ pot).
+- Bàn chơi realtime: chọn nhiều lá để đánh, bỏ lượt, đồng hồ 30 giây mỗi lượt, hiệu ứng chặt heo, tới trắng.
+- Hiện số người đang tìm trận theo từng cỡ bàn; tự vào lại trận/phòng khi mở lại app.
+
+**🎮 Cờ Caro — phòng cược xu**
+- Thêm phòng cược xu 1v1: đặt mức cược, tạo phòng, mời bằng mã; người thắng lấy toàn bộ pot.
+- Hiện số người đang tìm trận nhanh theo thời gian thực.
+
+**🤝 Thách đấu kiểu lời mời**
+- Thách đấu (Caro & Tiến Lên) giờ là lời mời: đối thủ nhận popup và phải đồng ý mới vào trận, tự hết hạn sau ~45 giây.
+
+**🛠️ Sửa lỗi**
+- Sửa lỗi spam thông báo "Đối thủ đã vào lại" khi đang chơi.
+- Lịch sử đấu cờ caro cập nhật ngay sau khi kết thúc trận.
+
+### 👾 Bản cập nhật v0.9.18
+
+**🎮 Cờ Caro 1v1 (mới)**
+- Thêm khu Cờ Caro: đấu xếp hạng 1v1, bàn 15×15, nối đủ 5 quân để thắng, mỗi nước 30 giây.
+- Tìm trận tự động (ghép theo điểm hạng) hoặc thách đấu trực tiếp từ hồ sơ người dùng.
+- Bàn cờ realtime: tô sáng nước đi cuối + đường thắng, đồng hồ đếm ngược, tự vào lại trận khi mở lại app.
+- Kết quả hiện thắng/thua/hòa kèm điểm hạng (+/- RP); có lịch sử đấu.
+
+**🏆 Cấp độ, Hạng & Bảng xếp hạng (mới)**
+- Hệ thống Cấp độ (XP) và Hạng đấu (RP) độc lập, mỗi mốc có huy hiệu màu + hình riêng.
+- Huy hiệu Cấp độ + Hạng hiện ngay cạnh tên ở chat cộng đồng, tin nhắn riêng, danh sách thành viên và hồ sơ.
+- Tên người dùng đổi màu + phát sáng theo cấp độ ở mọi nơi.
+- Bảng xếp hạng 3 mục: Cấp độ, Xu, Hạng đấu; có bục vinh danh top 3 và vị trí của bạn.
+- Tiến trình XP + RP hiện trong popup tài khoản ở thanh tiêu đề; hiệu ứng lên cấp / thăng hạng.
+
+**🎨 Giao diện**
+- Thiết kế lại huy hiệu cấp độ và hạng theo phong cách kính mờ, đồng bộ kích thước khắp nơi.
+- Thiết kế lại danh sách thành viên: tên theo màu cấp độ, huy hiệu gọn gàng, hiển thị vai trò rõ ràng.
+- Thiết kế lại hồ sơ người dùng: thẻ Cấp độ và Hạng cân đối cạnh nhau.
+- Bỏ viền màu thừa quanh ảnh đại diện ở toàn bộ ứng dụng.
+
+
 
 **💬 Tin nhắn riêng (mới)**
 - Thêm khu Tin nhắn: nhắn riêng 1-1 với bạn bè, danh sách hội thoại + khung chat thời gian thực.

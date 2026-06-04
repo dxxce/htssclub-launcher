@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  X, Loader2, Coins, Copy, UserPlus, UserCheck, Clock, Check, Calendar, BadgeCheck, Ban, MessageCircle,
+  X, Loader2, Coins, Copy, UserPlus, UserCheck, Clock, Check, Calendar, BadgeCheck, Ban, MessageCircle, Swords, Spade,
 } from "lucide-react";
 import { usersApi, friendsApi, type CommunityUser, type PresenceStatus, type LevelProgress, type RankInfo } from "../lib/communityApi";
 import { useCommunityStore } from "../store/useCommunityStore";
@@ -15,6 +15,8 @@ interface Props {
   onClose: () => void;
   onTransfer?: (user: CommunityUser) => void;
   onMessage?: (user: CommunityUser) => void;
+  onChallenge?: (user: CommunityUser) => void;
+  onChallengeTienLen?: (user: CommunityUser) => void;
 }
 
 type FriendState =
@@ -49,7 +51,7 @@ function gradFor(seed?: string) {
 }
 function initials(name?: string) { return (name || "?").trim().slice(0, 2).toUpperCase(); }
 
-export default function UserProfileModal({ userId, onClose, onTransfer, onMessage }: Props) {
+export default function UserProfileModal({ userId, onClose, onTransfer, onMessage, onChallenge, onChallengeTienLen }: Props) {
   const me = useCommunityStore((s) => s.user);
   const presenceMap = useCommunityStore((s) => s.presenceMap);
   const [user, setUser] = useState<CommunityUser | null>(null);
@@ -328,6 +330,22 @@ export default function UserProfileModal({ userId, onClose, onTransfer, onMessag
                       className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-violet-500/15 border border-violet-500/30 text-violet-200 hover:bg-violet-500/25 text-[12px] font-bold transition-all cursor-pointer active:scale-[0.98]"
                     >
                       <MessageCircle className="w-4 h-4" /> Nhắn tin
+                    </button>
+                  )}
+                  {onChallenge && (
+                    <button
+                      onClick={() => onChallenge(user)}
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-200 hover:bg-rose-500/25 text-[12px] font-bold transition-all cursor-pointer active:scale-[0.98]"
+                    >
+                      <Swords className="w-4 h-4" /> Thách đấu cờ caro
+                    </button>
+                  )}
+                  {onChallengeTienLen && (
+                    <button
+                      onClick={() => onChallengeTienLen(user)}
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 hover:bg-emerald-500/25 text-[12px] font-bold transition-all cursor-pointer active:scale-[0.98]"
+                    >
+                      <Spade className="w-4 h-4" /> Thách đấu Tiến Lên
                     </button>
                   )}
                 </div>
