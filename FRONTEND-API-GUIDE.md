@@ -147,6 +147,9 @@ DELETE /api/channels/:channelId/messages/:messageId/reactions   { emoji }
 Message object kèm: `author`, `replyTo` (null nếu tin gốc bị xóa),
 `reactions: [{ emoji, count, userIds, me }]`, `attachments: [{ url, type, name, size, category }]`.
 - `content` có thể RỖNG nếu có ≥1 attachment.
+- `author` (và `replyTo.author`) là card đầy đủ kèm **level + rank**:
+  `{ id, username, displayName, avatarUrl, level, levelStyle, rank }` → render
+  huy hiệu level/rank ngay trên mỗi tin nhắn.
 
 **WS (qua `chat`)**
 ```ts
@@ -212,8 +215,15 @@ GET  /api/wallet/balance                 [auth]
 GET  /api/wallet/transactions?page=&limit=
 POST /api/wallet/topup    { amount, method }
 POST /api/wallet/spend    { amount, reason, refId? }
-POST /api/wallet/transfer { toUserId, amount, note? }
+POST /api/wallet/transfer { toUserId, amount, note? }   -> { transferId, fromUserId, toUserId, amount, note, createdAt }
+GET  /api/wallet/transfers/:transferId                  chi tiết (chỉ người trong cuộc)
 ```
+- `transfer` KHÔNG trả số dư 2 bên — chỉ trả `transferId` + tóm tắt. Số dư mới
+  của riêng mình đến qua event `wallet:transaction`.
+- `GET /wallet/transfers/:transferId` (chỉ người gửi/nhận) trả:
+  `{ transferId, amount, note, from, to, direction: 'IN'|'OUT', myBalanceAfter,
+     myTransactionId, createdAt }` — `myBalanceAfter` chỉ là số dư của CHÍNH bạn,
+  không lộ số dư người kia.
 **Event** (room cá nhân):
 ```ts
 chat.on('wallet:transaction', ({ balance, transaction }) => {});
@@ -282,3 +292,84 @@ GET   /api/admin/stats
 4. **DM (kiểu Discord)**: TLS + mã hóa at-rest; server đọc được nội dung. Client
    gửi/nhận plaintext, KHÔNG cần quản lý khóa.
 5. **Voice/Stream**: media qua LiveKit SDK; backend chỉ là control plane.
+
+---
+
+## 12. Level / XP / Rank / Leaderboard
+
+> **Level/XP** và **Rank** là HAI hệ thống ĐỘC LẬP:
+> - Level/XP: kiếm XP (nhắn tin...), level càng cao càng cần nhiều XP.
+> - Rank: dựa trên Rank Points (RP) riêng, có tier/division kiểu game.
+>   KHÔNG suy ra từ XP/level.
+>
+> **Card người dùng ở MỌI nơi đều kèm level + rank** (message author,
+> replyTo.author, DM from/otherUser, voice member, server member...):
+> `{ id, username, displayName, avatarUrl, level, levelStyle, rank }`.
+> Frontend render huy hiệu level/rank ngay trên mỗi tin nhắn / avatar.
+
+User object kèm: `level`, `xp`, `rankPoints`, và `rank` (tier object).
+
+### REST
+```
+GET /api/users/me/level              progress XP của tôi
+GET /api/users/:id/level             progress XP người khác
+GET /api/users/me/rank               rank (tier/division) của tôi
+GET /api/users/:id/rank              rank người khác
+GET /api/leaderboard?type=xp|coins|rank&limit=50   1 bảng
+GET /api/leaderboard/both?limit=50                  cả 3 bảng: { xp[], coins[], rank[] }
+GET /api/leaderboard/me?type=xp|coins|rank          hạng của tôi
+```
+
+**Level progress** (`/users/me/level`):
+```jsonc
+{ "level": 5, "xp": 1000, "xpIntoLevel": 0, "xpForNextLevel": 500,
+  "xpToNextLevel": 500,    // 👈 còn cần bao nhiêu XP để lên cấp
+  "progress": 0.0,         // 0..1 để vẽ thanh
+  "style": {               // 👈 màu + hình dáng theo mốc 10 level
+    "bracket": 0, "name": "Học Viên", "minLevel": 1, "maxLevel": 10,
+    "shape": "circle", "color": "#22C55E", "colorSecondary": "#86EFAC", "glow": false
+  }
+}
+```
+Mốc level (mỗi 10 level đổi màu + hình): 1-10 Tân Binh (tròn xám) → 11-20 Học Viên
+→ 21-30 Chiến Binh (vuông) → ... → 91-100 Á Thần (sao) → 101+ Thần Thoại (vương miện).
+`shape` ∈ circle|square|shield|hexagon|star|crown. Frontend chọn asset/màu theo `style`.
+
+**Rank** (`/users/me/rank`) — tier/division kiểu game, kèm màu + hình:
+```jsonc
+{ "tier": "GOLD", "tierName": "Vàng", "tierIndex": 2,
+  "division": 2, "divisionLabel": "II", "label": "Vàng II",
+  "rp": 850, "rpIntoDivision": 50, "rpForNextStep": 100,
+  "rpToNextStep": 50,      // 👈 còn cần bao nhiêu RP để thăng hạng
+  "progress": 0.5, "isApex": false,
+  "shape": "shield", "color": "#F59E0B", "colorSecondary": "#FCD34D", "glow": false
+}
+```
+Tiers: Đồng → Bạc → Vàng (shield) → Bạch Kim → Kim Cương (gem) → Cao Thủ →
+Đại Cao Thủ (crown) → Thách Đấu (wings, apex). Mỗi tier có màu/hình riêng.
+
+**Leaderboard entry**:
+```jsonc
+{ "rank": 1, "userId", "user": {...},
+  "level": 5, "xp": 1000, "coins": 50, "rankPoints": 850,
+  "tier": { ...rank object... },     // tier/division
+  "score": 1000 }                    // theo `type` đang xem
+```
+
+### Realtime
+```ts
+// XP
+chat.on('level:xp', ({ level, xp, xpToNextLevel, progress, gained, reason }) => {});
+chat.on('level:up', ({ level, previousLevel, xp, serverId?, userId? }) => {});
+// Rank (RP)
+chat.on('rank:changed',  ({ rank, delta, reason }) => {});   // RP thay đổi
+chat.on('rank:promoted', ({ from, to, rank }) => {});         // thăng hạng
+chat.on('rank:demoted',  ({ from, to, rank }) => {});         // tụt hạng
+```
+- Notification persistent: `LEVEL_UP`, `RANK_UP`.
+
+### Cách kiếm
+- XP: gửi tin nhắn = +5 XP (tối đa 1 lần/60s).
+- RP: do backend cấp qua `LevelingService.addRankPoints` (vd thắng hoạt động đấu);
+  hiện chưa gắn nguồn tự động — gọi từ logic game khi có.
+

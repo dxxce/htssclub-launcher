@@ -233,7 +233,7 @@ export default function ServerSettings({ server, myUserId, myRole, onClose }: Pr
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-white/[0.06] flex-shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
-            <span className={`w-9 h-9 rounded-xl bg-gradient-to-br ${gradientFor(server.name)} flex items-center justify-center text-[11px] font-black text-white overflow-hidden flex-shrink-0`}>
+            <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-[11px] font-black text-white overflow-hidden flex-shrink-0 ${server.iconUrl ? "bg-[#15151f]" : `bg-gradient-to-br ${gradientFor(server.name)}`}`}>
               {server.iconUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={server.iconUrl} alt="" className="w-full h-full object-cover" />
@@ -284,7 +284,7 @@ export default function ServerSettings({ server, myUserId, myRole, onClose }: Pr
                   <button
                     onClick={() => isAdmin && fileRef.current?.click()}
                     disabled={!isAdmin}
-                    className={`relative w-20 h-20 rounded-2xl bg-gradient-to-br ${gradientFor(server.name)} flex items-center justify-center text-2xl font-black text-white overflow-hidden group flex-shrink-0 ${isAdmin ? "cursor-pointer" : "cursor-default"}`}
+                    className={`relative w-20 h-20 rounded-2xl flex items-center justify-center text-2xl font-black text-white overflow-hidden group flex-shrink-0 ${server.iconUrl ? "bg-[#15151f]" : `bg-gradient-to-br ${gradientFor(server.name)}`} ${isAdmin ? "cursor-pointer" : "cursor-default"}`}
                   >
                     {server.iconUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -358,7 +358,7 @@ export default function ServerSettings({ server, myUserId, myRole, onClose }: Pr
                 const editing = nickEditing === m.userId;
                 return (
                   <div key={m.id || m.userId || mi} className="flex items-center gap-3 px-2.5 py-2 rounded-xl hover:bg-white/[0.04] transition-colors group/m">
-                    <span className={`w-9 h-9 rounded-xl bg-gradient-to-br ${gradientFor(nm)} flex items-center justify-center text-[11px] font-black text-white overflow-hidden flex-shrink-0`}>
+                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-[11px] font-black text-white overflow-hidden flex-shrink-0 ${m.user?.avatarUrl ? "bg-[#15151f]" : `bg-gradient-to-br ${gradientFor(nm)}`}`}>
                       {m.user?.avatarUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={m.user.avatarUrl} alt="" className="w-full h-full object-cover" />
@@ -410,7 +410,7 @@ export default function ServerSettings({ server, myUserId, myRole, onClose }: Pr
                     const nm = b.user?.displayName || b.user?.username || b.userId;
                     return (
                       <div key={b.id || b.userId || bi} className="flex items-center gap-3 px-2.5 py-2 rounded-xl hover:bg-white/[0.04] transition-colors">
-                        <span className={`w-9 h-9 rounded-xl bg-gradient-to-br ${gradientFor(nm)} flex items-center justify-center text-[11px] font-black text-white overflow-hidden flex-shrink-0`}>
+                        <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-[11px] font-black text-white overflow-hidden flex-shrink-0 ${b.user?.avatarUrl ? "bg-[#15151f]" : `bg-gradient-to-br ${gradientFor(nm)}`}`}>
                           {b.user?.avatarUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={b.user.avatarUrl} alt="" className="w-full h-full object-cover" />

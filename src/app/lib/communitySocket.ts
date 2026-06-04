@@ -129,6 +129,37 @@ export interface WalletTxEvent {
   balance: number;
   transaction: Transaction;
 }
+// ── Level / XP (room cá nhân + server) ──
+export interface LevelXpEvent {
+  level: number;
+  xp: number;
+  xpIntoLevel?: number;
+  xpForNextLevel?: number;
+  xpToNextLevel?: number;
+  progress?: number;
+  gained?: number;
+  reason?: string;
+  serverId?: string;
+  userId?: string;
+}
+export interface LevelUpEvent {
+  level: number;
+  previousLevel?: number;
+  xp?: number;
+  serverId?: string;
+  userId?: string;
+}
+// ── Rank (RP — hệ thống độc lập) ──
+export interface RankChangedEvent {
+  rank: any; // RankInfo (chuẩn hoá ở store)
+  delta?: number;
+  reason?: string;
+}
+export interface RankStepEvent {
+  from?: string;
+  to?: string;
+  rank: any; // RankInfo
+}
 
 type ChatEventMap = {
   "message:new": (m: Message) => void;
@@ -170,6 +201,13 @@ type ChatEventMap = {
   "dm:deleted": (e: DmDeletedEvent) => void;
   // Ví xu realtime (room cá nhân)
   "wallet:transaction": (e: WalletTxEvent) => void;
+  // Level / XP realtime
+  "level:xp": (e: LevelXpEvent) => void;
+  "level:up": (e: LevelUpEvent) => void;
+  // Rank realtime
+  "rank:changed": (e: RankChangedEvent) => void;
+  "rank:promoted": (e: RankStepEvent) => void;
+  "rank:demoted": (e: RankStepEvent) => void;
   typing: (e: TypingEvent) => void;
   "presence:changed": (e: PresenceChangedEvent) => void;
   "notification:new": (n: NotificationItem) => void;

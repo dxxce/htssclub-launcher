@@ -4,8 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import {
   X, Loader2, Coins, Copy, UserPlus, UserCheck, Clock, Check, Calendar, BadgeCheck, Ban, MessageCircle,
 } from "lucide-react";
-import { usersApi, friendsApi, type CommunityUser, type PresenceStatus } from "../lib/communityApi";
+import { usersApi, friendsApi, type CommunityUser, type PresenceStatus, type LevelProgress, type RankInfo } from "../lib/communityApi";
 import { useCommunityStore } from "../store/useCommunityStore";
+import LevelBadge, { levelNameStyle } from "./LevelBadge";
+import RankBadge from "./RankBadge";
 import { toast } from "./Toast";
 
 interface Props {
@@ -57,6 +59,8 @@ export default function UserProfileModal({ userId, onClose, onTransfer, onMessag
   const [friendState, setFriendState] = useState<FriendState>("none");
   const [incomingReqId, setIncomingReqId] = useState<string | null>(null);
   const [friendBusy, setFriendBusy] = useState(false);
+  const [level, setLevel] = useState<LevelProgress | null>(null);
+  const [rank, setRank] = useState<RankInfo | null>(null);
 
   const isSelf = me?.id === userId;
 
@@ -93,6 +97,19 @@ export default function UserProfileModal({ userId, onClose, onTransfer, onMessag
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [userId, isSelf, me, applyFriendStatus]);
+
+  // Tải tiến trình cấp độ + rank của user (thanh XP / RP trong hồ sơ).
+  useEffect(() => {
+    let cancelled = false;
+    setLevel(null); setRank(null);
+    (isSelf ? usersApi.myLevel() : usersApi.levelOf(userId))
+      .then((p) => { if (!cancelled) setLevel(p); })
+      .catch(() => { if (!cancelled) setLevel(null); });
+    (isSelf ? usersApi.myRank() : usersApi.rankOf(userId))
+      .then((r) => { if (!cancelled) setRank(r ?? null); })
+      .catch(() => { if (!cancelled) setRank(null); });
+    return () => { cancelled = true; };
+  }, [userId, isSelf]);
 
   const presence: PresenceStatus = (user && presenceMap[user.id]) || user?.presence || "OFFLINE";
   const nm = user?.displayName || user?.username || "Người dùng";
@@ -167,7 +184,7 @@ export default function UserProfileModal({ userId, onClose, onTransfer, onMessag
             <div className="px-5 pb-5 -mt-12 relative">
               <div className="flex items-end gap-3">
                 <div className="relative inline-block flex-shrink-0">
-                  <div className={`w-20 h-20 rounded-2xl bg-gradient-to-br ${gradFor(user.username)} ring-4 ring-[#101019] flex items-center justify-center text-2xl font-black text-white overflow-hidden`}>
+                  <div className={`w-20 h-20 rounded-2xl ring-4 ring-[#101019] flex items-center justify-center text-2xl font-black text-white overflow-hidden ${user.avatarUrl ? "bg-[#15151f]" : `bg-gradient-to-br ${gradFor(user.username)}`}`}>
                     {user.avatarUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" />
@@ -186,10 +203,60 @@ export default function UserProfileModal({ userId, onClose, onTransfer, onMessag
               </div>
 
               <div className="mt-3 flex items-center gap-2 flex-wrap">
-                <h3 className="text-lg font-black text-white">{nm}</h3>
+                <h3 className="text-lg font-black" style={levelNameStyle(level?.level ?? user.level, level?.style ?? user.levelStyle) || { color: "#ffffff" }}>{nm}</h3>
                 {(user as any).isAdmin && <BadgeCheck className="w-4 h-4 text-sky-400" />}
               </div>
               <div className="text-[12px] text-neutral-500">@{user.username}</div>
+
+              {/* Cấp độ & Hạng — hai thẻ tiến trình bằng nhau */}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {/* Cấp độ (XP) */}
+                <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-2.5 flex flex-col">
+                  <div className="flex items-center justify-between gap-1 mb-2">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-neutral-500">Cấp độ</span>
+                    <LevelBadge level={level?.level ?? user.level} style={level?.style ?? user.levelStyle} size="sm" />
+                  </div>
+                  {level ? (
+                    <div className="mt-auto">
+                      <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                        <div className="h-full rounded-full transition-all" style={{ width: `${Math.round(level.progress * 100)}%`, background: `linear-gradient(to right, ${level.style?.color || "#8b5cf6"}, ${level.style?.colorSecondary || "#d946ef"})` }} />
+                      </div>
+                      <div className="mt-1 text-[9px] font-bold text-neutral-500 tabular-nums text-right">
+                        {level.xpIntoLevel.toLocaleString("vi-VN")} / {(level.xpIntoLevel + level.xpToNextLevel).toLocaleString("vi-VN")} XP
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-auto text-[10px] text-neutral-600">—</div>
+                  )}
+                </div>
+                {/* Hạng (RP) */}
+                <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-2.5 flex flex-col">
+                  <div className="flex items-center justify-between gap-1 mb-2">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-neutral-500">Hạng</span>
+                    {rank && rank.tier && rank.tier !== "UNRANKED"
+                      ? <RankBadge rank={rank ?? user.rank} size="sm" />
+                      : <span className="text-[9px] font-bold text-neutral-600">Chưa xếp</span>}
+                  </div>
+                  {rank && rank.tier && rank.tier !== "UNRANKED" ? (
+                    <div className="mt-auto">
+                      {!rank.isApex ? (
+                        <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                          <div className="h-full rounded-full transition-all" style={{ width: `${Math.round((rank.progress ?? 0) * 100)}%`, background: `linear-gradient(to right, ${rank.color || "#f59e0b"}, ${rank.colorSecondary || "#fcd34d"})` }} />
+                        </div>
+                      ) : (
+                        <div className="h-1.5 rounded-full" style={{ background: `linear-gradient(to right, ${rank.color || "#f59e0b"}, ${rank.colorSecondary || "#fcd34d"})` }} />
+                      )}
+                      <div className="mt-1 text-[9px] font-bold text-neutral-500 tabular-nums text-right">
+                        {!rank.isApex && typeof rank.rpToNextStep === "number"
+                          ? `${(rank.rpIntoDivision ?? 0).toLocaleString("vi-VN")} / ${((rank.rpIntoDivision ?? 0) + (rank.rpToNextStep ?? 0)).toLocaleString("vi-VN")} RP`
+                          : `${(rank.rp ?? 0).toLocaleString("vi-VN")} RP`}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-auto text-[10px] text-neutral-600">—</div>
+                  )}
+                </div>
+              </div>
 
               <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.06] text-[10px] font-bold text-neutral-300">

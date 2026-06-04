@@ -19,7 +19,7 @@ function initials(name?: string) { return (name || "?").trim().slice(0, 2).toUpp
 
 function MiniAvatar({ name, url }: { name?: string; url?: string }) {
   return (
-    <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${gradFor(name)} flex items-center justify-center text-base font-black text-white overflow-hidden`}>
+    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-base font-black text-white overflow-hidden ${url ? "bg-[#15151f]" : `bg-gradient-to-br ${gradFor(name)}`}`}>
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={url} alt="" className="w-full h-full object-cover" />

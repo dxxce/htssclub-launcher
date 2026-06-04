@@ -46,7 +46,7 @@ function initials(name?: string) {
 function Avatar({ name, url, presence, size = 40 }: { name?: string; url?: string; presence?: PresenceStatus; size?: number }) {
   return (
     <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
-      <div className={`w-full h-full rounded-2xl bg-gradient-to-br ${gradientFor(name)} flex items-center justify-center font-black text-white overflow-hidden`} style={{ fontSize: size * 0.34 }}>
+      <div className={`w-full h-full rounded-2xl flex items-center justify-center font-black text-white overflow-hidden ${url ? "bg-[#15151f]" : `bg-gradient-to-br ${gradientFor(name)}`}`} style={{ fontSize: size * 0.34 }}>
         {url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={url} alt="" className="w-full h-full object-cover" />

@@ -212,7 +212,7 @@ function TransferTab({ me, balance, refreshMe, onDone, presetTarget, onTransferr
       <label className="block text-[11px] font-black uppercase tracking-widest text-neutral-500 mb-1.5">Người nhận</label>
       {target ? (
         <div className="flex items-center gap-3 px-3 py-2.5 mb-3 rounded-xl bg-white/[0.04] border border-violet-500/30">
-          <span className={`w-9 h-9 rounded-xl bg-gradient-to-br ${gradFor(target.username)} flex items-center justify-center text-[11px] font-black text-white overflow-hidden flex-shrink-0`}>
+          <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-[11px] font-black text-white overflow-hidden flex-shrink-0 ${target.avatarUrl ? "bg-[#15151f]" : `bg-gradient-to-br ${gradFor(target.username)}`}`}>
             {target.avatarUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={target.avatarUrl} alt="" className="w-full h-full object-cover" />
@@ -239,7 +239,7 @@ function TransferTab({ me, balance, refreshMe, onDone, presetTarget, onTransferr
             <div className="mt-2 flex flex-col gap-1 max-h-44 overflow-y-auto custom-scrollbar">
               {results.map((u) => (
                 <button key={u.id} onClick={() => { setTarget(u); setResults([]); }} className="flex items-center gap-2.5 w-full px-2 py-1.5 rounded-lg hover:bg-white/[0.06] transition-colors cursor-pointer text-left">
-                  <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${gradFor(u.username)} flex items-center justify-center text-[10px] font-black text-white overflow-hidden flex-shrink-0`}>
+                  <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-black text-white overflow-hidden flex-shrink-0 ${u.avatarUrl ? "bg-[#15151f]" : `bg-gradient-to-br ${gradFor(u.username)}`}`}>
                     {u.avatarUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={u.avatarUrl} alt="" className="w-full h-full object-cover" />

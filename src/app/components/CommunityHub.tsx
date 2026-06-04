@@ -8,7 +8,7 @@ import {
   UserPlus, Smile, ChevronLeft, ChevronRight, ImagePlus, FileText, Download, Pencil, GripVertical,
   Paperclip, FileVideo, FileAudio, Bold, Italic, Strikethrough, Code, Link2, Quote, List, Eye, EyeOff, Reply, SmilePlus,
   ScreenShare, ScreenShareOff, Video, Maximize2, Minimize2, MonitorPlay, Camera,
-  Users2, MessageCircle, Check,
+  Users2, MessageCircle, Check, Trophy,
 } from "lucide-react";
 import { useCommunityStore } from "../store/useCommunityStore";
 import { useVoiceStore, type VoiceParticipantState } from "../store/useVoiceStore";
@@ -20,7 +20,12 @@ import ServerSettings from "./ServerSettings";
 import UserProfileModal from "./UserProfileModal";
 import FriendsView from "./FriendsView";
 import MessagesView from "./MessagesView";
+import LeaderboardView from "./LeaderboardView";
+import LevelUpOverlay from "./LevelUpOverlay";
+import LevelBadge, { levelNameStyle, levelColors } from "./LevelBadge";
+import RankBadge from "./RankBadge";
 import { useDmStore } from "../store/useDmStore";
+import { useLevelStore } from "../store/useLevelStore";
 import WalletModal from "./WalletModal";
 import VoiceSettingsModal from "./VoiceSettingsModal";
 import ScreenSharePicker from "./ScreenSharePicker";
@@ -92,7 +97,7 @@ function Avatar({
   return (
     <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
       <div
-        className={`w-full h-full rounded-2xl bg-gradient-to-br ${gradientFor(name)} flex items-center justify-center font-black text-white overflow-hidden ${ring ? "ring-2 ring-emerald-400" : ""}`}
+        className={`w-full h-full rounded-2xl flex items-center justify-center font-black text-white overflow-hidden ${url ? "bg-[#15151f]" : `bg-gradient-to-br ${gradientFor(name)}`} ${ring ? "ring-2 ring-emerald-400" : ""}`}
         style={{ fontSize: size * 0.34 }}
       >
         {url ? (
@@ -282,8 +287,8 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
   const [showServerSettings, setShowServerSettings] = useState(false);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [showSharePicker, setShowSharePicker] = useState(false);
-  // View switcher: cộng đồng (server/chat) | bạn bè | tin nhắn.
-  const [view, setView] = useState<"community" | "friends" | "messages">("community");
+  // View switcher: cộng đồng (server/chat) | bạn bè | tin nhắn | bảng xếp hạng.
+  const [view, setView] = useState<"community" | "friends" | "messages" | "leaderboard">("community");
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -311,6 +316,10 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
     const dm = useDmStore.getState();
     dm.bindRealtime();
     dm.loadConversations();
+    // Level/XP realtime + tải tiến trình cấp độ của mình.
+    const lv = useLevelStore.getState();
+    lv.bindRealtime();
+    lv.loadMyLevel();
   }, [user]);
 
   useEffect(() => {
@@ -720,14 +729,16 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
             <div className={`w-8 h-8 rounded-xl flex items-center justify-center shadow-[0_0_14px_rgba(139,92,246,0.4)] transition-transform group-hover:scale-105 ${
               view === "community" ? "bg-gradient-to-br from-violet-600 to-fuchsia-600"
               : view === "friends" ? "bg-gradient-to-br from-emerald-600 to-teal-600"
+              : view === "leaderboard" ? "bg-gradient-to-br from-amber-500 to-orange-600"
               : "bg-gradient-to-br from-sky-600 to-indigo-600"
             }`}>
               {view === "community" ? <Sparkles className="w-4 h-4 text-white" />
                 : view === "friends" ? <Users2 className="w-4 h-4 text-white" />
+                : view === "leaderboard" ? <Trophy className="w-4 h-4 text-white" />
                 : <MessageCircle className="w-4 h-4 text-white" />}
             </div>
             <span className="text-[13px] font-black text-white hidden md:block">
-              {view === "community" ? "Cộng đồng" : view === "friends" ? "Bạn bè" : "Tin nhắn"}
+              {view === "community" ? "Cộng đồng" : view === "friends" ? "Bạn bè" : view === "leaderboard" ? "Xếp hạng" : "Tin nhắn"}
             </span>
             {dmUnread > 0 && view !== "messages" && (
               <span className="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center">{dmUnread > 99 ? "99+" : dmUnread}</span>
@@ -744,6 +755,7 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
                   { id: "community", label: "Cộng đồng", desc: "Server, kênh & thoại", Icon: Sparkles, grad: "from-violet-600 to-fuchsia-600" },
                   { id: "friends", label: "Bạn bè", desc: "Danh sách & lời mời", Icon: Users2, grad: "from-emerald-600 to-teal-600" },
                   { id: "messages", label: "Tin nhắn", desc: "Nhắn riêng 1-1", Icon: MessageCircle, grad: "from-sky-600 to-indigo-600" },
+                  { id: "leaderboard", label: "Bảng xếp hạng", desc: "Cấp độ & xu", Icon: Trophy, grad: "from-amber-500 to-orange-600" },
                 ] as const).map(({ id, label, desc, Icon, grad }) => (
                   <button
                     key={id}
@@ -801,7 +813,7 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
                       : "bg-white/[0.03] border-white/[0.06] text-neutral-400 hover:text-white hover:bg-white/[0.07]"
                   }`}
                 >
-                  <span className={`w-6 h-6 rounded-full bg-gradient-to-br ${gradientFor(srv.name)} flex items-center justify-center text-[9px] font-black text-white overflow-hidden pointer-events-none`}>
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black text-white overflow-hidden pointer-events-none ${srv.iconUrl ? "bg-[#15151f]" : `bg-gradient-to-br ${gradientFor(srv.name)}`}`}>
                     {srv.iconUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={srv.iconUrl} alt="" className="w-full h-full object-cover" />
@@ -833,6 +845,8 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
         <FriendsView onOpenProfile={openProfile} />
       ) : view === "messages" ? (
         <MessagesView onOpenProfile={openProfile} onOpenWallet={() => setWalletTarget(null)} />
+      ) : view === "leaderboard" ? (
+        <LeaderboardView onOpenProfile={openProfile} />
       ) : (
       <div className="flex flex-1 min-h-0">
         {/* ── Sidebar kênh ── */}
@@ -861,7 +875,7 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
                 <div className="relative rounded-2xl bg-gradient-to-br from-violet-600/20 to-fuchsia-600/10 border border-white/[0.08] p-3 overflow-hidden">
                   <div className="absolute inset-x-0 top-0 h-px grad-hairline" />
                   <div className="flex items-center gap-2.5">
-                    <span className={`w-10 h-10 rounded-xl bg-gradient-to-br ${gradientFor(activeServer.name)} flex items-center justify-center text-sm font-black text-white overflow-hidden flex-shrink-0`}>
+                    <span className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-black text-white overflow-hidden flex-shrink-0 ${activeServer.iconUrl ? "bg-[#15151f]" : `bg-gradient-to-br ${gradientFor(activeServer.name)}`}`}>
                       {activeServer.iconUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={activeServer.iconUrl} alt="" className="w-full h-full object-cover" />
@@ -1166,8 +1180,11 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
                               <button
                                 onClick={() => openProfile(m.authorId)}
                                 onContextMenu={(e) => openUserMenu(e, { userId: m.authorId, name, avatarUrl: author?.avatarUrl })}
-                                className={`text-[13px] font-bold hover:underline cursor-pointer ${mine ? "text-violet-300" : "text-sky-300"}`}
+                                className="text-[13px] font-bold hover:underline cursor-pointer"
+                                style={levelNameStyle((author as any)?.level, (author as any)?.levelStyle) || { color: mine ? "#c4b5fd" : "#7dd3fc" }}
                               >{name}</button>
+                              <LevelBadge level={(author as any)?.level} style={(author as any)?.levelStyle} />
+                              <RankBadge rank={(author as any)?.rank} />
                               <span className="text-[10px] text-neutral-600">
                                 {new Date(m.createdAt).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
                               </span>
@@ -1506,6 +1523,9 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
       {/* Menu chuột phải */}
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
 
+      {/* Hiệu ứng Level Up toàn cục */}
+      <LevelUpOverlay />
+
       {/* Cài đặt tài khoản */}
       {showAccountSettings && <CommunityAccountSettings onClose={() => setShowAccountSettings(false)} />}
 
@@ -1578,7 +1598,7 @@ function MemberSection({
   label, members, presenceMap, dim, onSelect, onContextMenu,
 }: {
   label: string;
-  members: { id?: string; userId: string; role: MemberRole; nickname?: string; user?: { displayName?: string; username?: string; avatarUrl?: string; presence?: PresenceStatus; statusMessage?: string } }[];
+  members: { id?: string; userId: string; role: MemberRole; nickname?: string; user?: { displayName?: string; username?: string; avatarUrl?: string; presence?: PresenceStatus; statusMessage?: string; level?: number; levelStyle?: import("../lib/communityApi").LevelStyle; rank?: import("../lib/communityApi").RankInfo } }[];
   presenceMap: Record<string, PresenceStatus>;
   dim?: boolean;
   onSelect?: (userId: string) => void;
@@ -1586,31 +1606,50 @@ function MemberSection({
 }) {
   if (members.length === 0) return null;
   return (
-    <div className="mb-2">
-      <div className="text-[9px] font-black uppercase tracking-widest text-neutral-600 px-2 mb-1">{label}</div>
-      {members.map((mem, mi) => {
-        const RoleIcon = ROLE_ICON[mem.role];
-        const nm = mem.nickname || mem.user?.displayName || mem.user?.username || "Người dùng";
-        const pres = presenceMap[mem.userId] || mem.user?.presence || "OFFLINE";
-        const status = mem.user?.statusMessage;
-        return (
-          <button
-            key={mem.id || mem.userId || `mem-${mi}`}
-            onClick={() => onSelect?.(mem.userId)}
-            onContextMenu={(e) => onContextMenu?.(e, { userId: mem.userId, name: nm, avatarUrl: mem.user?.avatarUrl })}
-            className={`flex items-center gap-2.5 w-full px-2 py-1.5 rounded-xl hover:bg-white/[0.04] transition-colors cursor-pointer text-left ${dim ? "opacity-60" : ""}`}
-          >
-            <Avatar name={nm} url={mem.user?.avatarUrl} size={32} presence={pres} />
-            <span className="flex-1 min-w-0 flex flex-col">
-              <span className="text-[12px] font-semibold text-neutral-200 truncate leading-tight">{nm}</span>
-              {status && <span className="text-[10px] text-neutral-500 truncate leading-tight">{status}</span>}
-            </span>
-            {mem.role !== "MEMBER" && (
-              <RoleIcon className={`w-3.5 h-3.5 flex-shrink-0 ${mem.role === "OWNER" ? "text-amber-400" : "text-sky-400"}`} />
-            )}
-          </button>
-        );
-      })}
+    <div className="mb-3">
+      <div className="flex items-center gap-2 px-2 mb-1.5">
+        <span className="text-[10px] font-black uppercase tracking-widest text-neutral-500">{label}</span>
+        <span className="text-[10px] font-bold text-neutral-600">{members.length}</span>
+        <span className="flex-1 h-px bg-white/[0.06]" />
+      </div>
+      <div className="flex flex-col gap-0.5">
+        {members.map((mem, mi) => {
+          const RoleIcon = ROLE_ICON[mem.role];
+          const nm = mem.nickname || mem.user?.displayName || mem.user?.username || "Người dùng";
+          const pres = presenceMap[mem.userId] || mem.user?.presence || "OFFLINE";
+          const status = mem.user?.statusMessage;
+          const lvl = mem.user?.level;
+          const lvlStyle = mem.user?.levelStyle;
+          const lc = levelColors(lvl, lvlStyle);
+          const nameStyle = levelNameStyle(lvl, lvlStyle);
+          const isStaff = mem.role !== "MEMBER";
+          return (
+            <button
+              key={mem.id || mem.userId || `mem-${mi}`}
+              onClick={() => onSelect?.(mem.userId)}
+              onContextMenu={(e) => onContextMenu?.(e, { userId: mem.userId, name: nm, avatarUrl: mem.user?.avatarUrl })}
+              className={`group/mem relative flex items-center gap-2.5 w-full px-2 py-1.5 rounded-xl border border-transparent hover:bg-white/[0.04] hover:border-white/[0.06] transition-all cursor-pointer text-left ${dim ? "opacity-55 hover:opacity-90" : ""}`}
+            >
+              {/* vạch sáng theo màu level ở mép trái khi hover */}
+              {lc && <span className="pointer-events-none absolute inset-y-1.5 left-0 w-0.5 rounded-full opacity-0 group-hover/mem:opacity-100 transition-opacity" style={{ background: `linear-gradient(to bottom, ${lc.color}, ${lc.color2})` }} />}
+              <Avatar name={nm} url={mem.user?.avatarUrl} size={36} presence={pres} />
+              <span className="flex-1 min-w-0 flex flex-col gap-1">
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-[12.5px] font-bold truncate leading-tight" style={nameStyle || { color: "#e5e5e5" }}>{nm}</span>
+                  {isStaff && (
+                    <RoleIcon className={`w-3.5 h-3.5 flex-shrink-0 ${mem.role === "OWNER" ? "text-amber-400" : "text-sky-400"}`} />
+                  )}
+                </span>
+                <span className="flex items-center gap-1 min-w-0 flex-wrap">
+                  <LevelBadge level={lvl} style={lvlStyle} />
+                  <RankBadge rank={mem.user?.rank} />
+                </span>
+                {status && <span className="text-[10px] text-neutral-500 truncate leading-tight italic">{status}</span>}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1830,7 +1869,7 @@ function VoiceChannelGroup({
                       onContextMenu={(e) => { e.stopPropagation(); if (p.userId) onUserContextMenu?.(e, { userId: p.userId, name: p.name, avatarUrl: p.avatarUrl }); }}
                       className="flex items-center gap-2 px-1 py-1 rounded-lg w-full text-left hover:bg-white/[0.05] transition-colors cursor-pointer"
                     >
-                      <div className={`relative w-6 h-6 rounded-full bg-gradient-to-br ${gradientFor(p.name)} flex items-center justify-center text-[9px] font-black text-white overflow-hidden ring-2 transition-all ${p.speaking ? "ring-emerald-400" : "ring-transparent"}`}>
+                      <div className={`relative w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black text-white overflow-hidden ring-2 transition-all ${p.avatarUrl ? "bg-[#15151f]" : `bg-gradient-to-br ${gradientFor(p.name)}`} ${p.speaking ? "ring-emerald-400" : "ring-transparent"}`}>
                         {p.avatarUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={p.avatarUrl} alt="" className="w-full h-full object-cover" />

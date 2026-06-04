@@ -12,6 +12,8 @@ import { MessageText, LinkPreviews } from "./MessageContent";
 import ChatComposer, { type ChatComposerHandle } from "./ChatComposer";
 import TransferDetailModal from "./TransferDetailModal";
 import ImageLightbox from "./ImageLightbox";
+import LevelBadge, { levelNameStyle } from "./LevelBadge";
+import RankBadge from "./RankBadge";
 
 const PRESENCE_DOT: Record<PresenceStatus, string> = {
   ONLINE: "bg-emerald-400", IDLE: "bg-amber-400", DND: "bg-rose-500", OFFLINE: "bg-neutral-600",
@@ -31,7 +33,7 @@ function initials(name?: string) { return name ? name.trim().slice(0, 2).toUpper
 function Avatar({ name, url, presence, size = 40 }: { name?: string; url?: string; presence?: PresenceStatus; size?: number }) {
   return (
     <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
-      <div className={`w-full h-full rounded-2xl bg-gradient-to-br ${gradientFor(name)} flex items-center justify-center font-black text-white overflow-hidden`} style={{ fontSize: size * 0.34 }}>
+      <div className={`w-full h-full rounded-2xl flex items-center justify-center font-black text-white overflow-hidden ${url ? "bg-[#15151f]" : `bg-gradient-to-br ${gradientFor(name)}`}`} style={{ fontSize: size * 0.34 }}>
         {url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={url} alt="" className="w-full h-full object-cover" />
@@ -205,7 +207,9 @@ export default function MessagesView({ onOpenProfile, onOpenWallet }: { onOpenPr
                   const grouped = !!prev && prev.senderId === m.senderId && (new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60 * 1000);
                   const isSystem = m.type === "SYSTEM";
                   const isCoin = isSystem && m.systemData?.kind === "COIN_TRANSFER";
-                  const sender = mine ? me : activeConv.user;
+                  // Ưu tiên card sender đính kèm trong tin (đã có level + rank đầy đủ),
+                  // fallback về me / đối phương trong hội thoại.
+                  const sender = mine ? (m.sender || me) : (m.sender || activeConv.user);
                   const name = sender?.displayName || sender?.username || "Người dùng";
                   const atts = (m.attachments || []).filter(Boolean);
                   const images = atts.filter((a) => (a.type || "").startsWith("image/"));
@@ -231,7 +235,9 @@ export default function MessagesView({ onOpenProfile, onOpenWallet }: { onOpenPr
                       <div className="flex-1 min-w-0">
                         {!grouped && (
                           <div className="flex items-baseline gap-2">
-                            <button onClick={() => sender?.id && onOpenProfile?.(sender.id)} className={`text-[13px] font-bold hover:underline cursor-pointer ${mine ? "text-violet-300" : "text-sky-300"}`}>{name}</button>
+                            <button onClick={() => sender?.id && onOpenProfile?.(sender.id)} className="text-[13px] font-bold hover:underline cursor-pointer" style={levelNameStyle(sender?.level, sender?.levelStyle) || { color: mine ? "#c4b5fd" : "#7dd3fc" }}>{name}</button>
+                            <LevelBadge level={sender?.level} style={sender?.levelStyle} />
+                            <RankBadge rank={sender?.rank} />
                             <span className="text-[10px] text-neutral-600">{new Date(m.createdAt).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}</span>
                           </div>
                         )}

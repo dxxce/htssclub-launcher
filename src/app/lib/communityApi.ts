@@ -21,6 +21,39 @@ export type MemberRole = "OWNER" | "ADMIN" | "MEMBER";
 
 export type FriendStatus = "NONE" | "FRIENDS" | "REQUEST_SENT" | "REQUEST_RECEIVED" | "BLOCKED" | "BLOCKED_BY" | "SELF";
 
+// Cosmetic cho huy hiệu level (mỗi 10 cấp đổi màu + hình).
+export type BadgeShape = "circle" | "square" | "shield" | "hexagon" | "star" | "crown" | "gem" | "wings";
+export interface LevelStyle {
+  bracket?: number;
+  name?: string;
+  minLevel?: number;
+  maxLevel?: number;
+  shape?: BadgeShape;
+  color?: string;
+  colorSecondary?: string;
+  glow?: boolean;
+}
+
+// Thông tin hạng (tier/division kiểu game) — độc lập với level/XP.
+export interface RankInfo {
+  tier: string;            // BRONZE | SILVER | GOLD | ...
+  tierName?: string;       // "Vàng"
+  tierIndex?: number;
+  division?: number;
+  divisionLabel?: string;  // "II"
+  label?: string;          // "Vàng II"
+  rp?: number;
+  rpIntoDivision?: number;
+  rpForNextStep?: number;
+  rpToNextStep?: number;
+  progress?: number;       // 0..1
+  isApex?: boolean;
+  shape?: BadgeShape;
+  color?: string;
+  colorSecondary?: string;
+  glow?: boolean;
+}
+
 export interface CommunityUser {
   id: string;
   username: string;
@@ -34,9 +67,38 @@ export interface CommunityUser {
   presence: PresenceStatus;
   lastSeenAt?: string;
   createdAt?: string;
+  level?: number;          // cấp độ (hệ thống XP)
+  xp?: number;             // tổng điểm kinh nghiệm
+  levelStyle?: LevelStyle; // cosmetic huy hiệu level
+  rankPoints?: number;     // điểm hạng (RP) — hệ thống rank độc lập
+  rank?: RankInfo;         // tier/division hiện tại
   // Trạng thái kết bạn theo góc nhìn người gọi (từ GET /users/:id, /users/search).
   friendStatus?: FriendStatus;
   friendRequestId?: string; // dùng cho nút Chấp nhận/Từ chối khi REQUEST_RECEIVED
+}
+
+// Tiến trình level của 1 user.
+export interface LevelProgress {
+  level: number;
+  xp: number;
+  xpIntoLevel: number;
+  xpForNextLevel: number;
+  xpToNextLevel: number;
+  progress: number; // 0..1 để vẽ thanh tiến trình
+  style?: LevelStyle;
+}
+
+// Một dòng trong bảng xếp hạng.
+export interface LeaderboardEntry {
+  rank: number;
+  userId: string;
+  user?: CommunityUser;
+  level: number;
+  xp: number;
+  coins: number;
+  rankPoints?: number;
+  tier?: RankInfo;
+  score: number; // theo `type` (xp / coins / rank)
 }
 
 export interface AuthResult {
@@ -304,8 +366,49 @@ export function normalizeUser(u: any): CommunityUser | undefined {
     presence: u.presence ?? "OFFLINE",
     lastSeenAt: u.lastSeenAt,
     createdAt: u.createdAt,
+    level: typeof u.level === "number" ? u.level : undefined,
+    xp: typeof u.xp === "number" ? u.xp : undefined,
+    levelStyle: normalizeLevelStyle(u.levelStyle ?? u.style),
+    rankPoints: typeof u.rankPoints === "number" ? u.rankPoints : undefined,
+    rank: u.rank ? normalizeRank(u.rank) : undefined,
     friendStatus: u.friendStatus,
     friendRequestId: u.friendRequestId ? normId(u.friendRequestId) : undefined,
+  };
+}
+
+export function normalizeLevelStyle(s: any): LevelStyle | undefined {
+  if (!s || typeof s !== "object") return undefined;
+  return {
+    bracket: typeof s.bracket === "number" ? s.bracket : undefined,
+    name: s.name,
+    minLevel: s.minLevel,
+    maxLevel: s.maxLevel,
+    shape: s.shape,
+    color: s.color,
+    colorSecondary: s.colorSecondary,
+    glow: !!s.glow,
+  };
+}
+
+export function normalizeRank(r: any): RankInfo | undefined {
+  if (!r || typeof r !== "object") return undefined;
+  return {
+    tier: r.tier ?? "UNRANKED",
+    tierName: r.tierName,
+    tierIndex: typeof r.tierIndex === "number" ? r.tierIndex : undefined,
+    division: typeof r.division === "number" ? r.division : undefined,
+    divisionLabel: r.divisionLabel,
+    label: r.label,
+    rp: typeof r.rp === "number" ? r.rp : undefined,
+    rpIntoDivision: typeof r.rpIntoDivision === "number" ? r.rpIntoDivision : undefined,
+    rpForNextStep: typeof r.rpForNextStep === "number" ? r.rpForNextStep : undefined,
+    rpToNextStep: typeof r.rpToNextStep === "number" ? r.rpToNextStep : undefined,
+    progress: typeof r.progress === "number" ? Math.max(0, Math.min(1, r.progress)) : undefined,
+    isApex: !!r.isApex,
+    shape: r.shape,
+    color: r.color,
+    colorSecondary: r.colorSecondary,
+    glow: !!r.glow,
   };
 }
 
@@ -698,6 +801,67 @@ export const usersApi = {
   },
   updatePresence(status: PresenceStatus) {
     return patch<CommunityUser>("/users/me/presence", { status });
+  },
+  myLevel() {
+    return get<any>("/users/me/level").then((d) => normalizeLevelProgress(d?.data ?? d));
+  },
+  levelOf(id: string) {
+    return get<any>(`/users/${id}/level`).then((d) => normalizeLevelProgress(d?.data ?? d));
+  },
+  myRank() {
+    return get<any>("/users/me/rank").then((d) => normalizeRank(d?.data ?? d));
+  },
+  rankOf(id: string) {
+    return get<any>(`/users/${id}/rank`).then((d) => normalizeRank(d?.data ?? d));
+  },
+};
+
+function normalizeLevelProgress(r: any): LevelProgress {
+  const o = r ?? {};
+  return {
+    level: typeof o.level === "number" ? o.level : 1,
+    xp: typeof o.xp === "number" ? o.xp : 0,
+    xpIntoLevel: typeof o.xpIntoLevel === "number" ? o.xpIntoLevel : 0,
+    xpForNextLevel: typeof o.xpForNextLevel === "number" ? o.xpForNextLevel : 0,
+    xpToNextLevel: typeof o.xpToNextLevel === "number" ? o.xpToNextLevel : 0,
+    progress: typeof o.progress === "number" ? Math.max(0, Math.min(1, o.progress)) : 0,
+    style: normalizeLevelStyle(o.style),
+  };
+}
+
+function normalizeLeaderboardEntry(r: any): LeaderboardEntry {
+  return {
+    rank: typeof r?.rank === "number" ? r.rank : 0,
+    userId: normId(r?.userId ?? r?.user?.id ?? r?.user?._id),
+    user: normalizeUser(r?.user),
+    level: typeof r?.level === "number" ? r.level : 1,
+    xp: typeof r?.xp === "number" ? r.xp : 0,
+    coins: typeof r?.coins === "number" ? r.coins : 0,
+    rankPoints: typeof r?.rankPoints === "number" ? r.rankPoints : undefined,
+    tier: r?.tier ? normalizeRank(r.tier) : undefined,
+    score: typeof r?.score === "number" ? r.score : 0,
+  };
+}
+
+// ── Leaderboard / Level / Rank ───────────────────────────────────────────────
+export const leaderboardApi = {
+  list(type: "xp" | "coins" | "rank" = "xp", limit = 50) {
+    return get<any>(`/leaderboard?type=${type}&limit=${limit}`).then((raw) =>
+      extractList(raw?.data ?? raw).map(normalizeLeaderboardEntry) as LeaderboardEntry[]
+    );
+  },
+  both(limit = 50) {
+    return get<any>(`/leaderboard/both?limit=${limit}`).then((d) => {
+      const r = d?.data ?? d ?? {};
+      return {
+        xp: Array.isArray(r.xp) ? r.xp.map(normalizeLeaderboardEntry) as LeaderboardEntry[] : [],
+        coins: Array.isArray(r.coins) ? r.coins.map(normalizeLeaderboardEntry) as LeaderboardEntry[] : [],
+        rank: Array.isArray(r.rank) ? r.rank.map(normalizeLeaderboardEntry) as LeaderboardEntry[] : [],
+      };
+    });
+  },
+  myRank(type: "xp" | "coins" | "rank" = "xp") {
+    return get<any>(`/leaderboard/me?type=${type}`).then((d) => normalizeLeaderboardEntry(d?.data ?? d));
   },
 };
 

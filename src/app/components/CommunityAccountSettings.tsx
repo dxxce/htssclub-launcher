@@ -156,7 +156,7 @@ export default function CommunityAccountSettings({ onClose }: Props) {
             <div className="flex items-center gap-4 mb-6">
               <button
                 onClick={pickFile}
-                className="relative w-20 h-20 rounded-full bg-gradient-to-tr from-indigo-500 to-fuchsia-500 flex items-center justify-center text-xl font-black text-white overflow-hidden group cursor-pointer flex-shrink-0"
+                className={`relative w-20 h-20 rounded-full flex items-center justify-center text-xl font-black text-white overflow-hidden group cursor-pointer flex-shrink-0 ${user.avatarUrl ? "bg-[#15151f]" : "bg-gradient-to-tr from-indigo-500 to-fuchsia-500"}`}
               >
                 {user.avatarUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element

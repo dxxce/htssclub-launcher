@@ -13,6 +13,8 @@ import { toast } from "./components/Toast";
 import CommunityAuthGate from "./components/CommunityAuthGate";
 import CommunityAccountSettings from "./components/CommunityAccountSettings";
 import WalletModal from "./components/WalletModal";
+import HeaderLevelProgress from "./components/HeaderLevelProgress";
+import { levelNameStyle } from "./components/LevelBadge";
 
 // Heavy sub-apps are loaded on demand (client-only) so the initial route stays
 // small. Each one is only compiled/fetched the first time it's needed, which
@@ -612,7 +614,7 @@ export default function HomePage() {
               className="flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-full hover:bg-white/[0.08] bg-white/[0.04] border border-white/[0.08] hover:border-white/15 transition-all cursor-pointer group"
             >
               <div className="relative flex-shrink-0">
-                <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-indigo-500 via-violet-500 to-fuchsia-500 flex items-center justify-center overflow-hidden">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center overflow-hidden ${communityUser?.avatarUrl ? "bg-[#15151f]" : "bg-gradient-to-tr from-indigo-500 via-violet-500 to-fuchsia-500"}`}>
                   {communityUser?.avatarUrl ? (
                     <img src={communityUser.avatarUrl} alt="" className="w-full h-full object-cover" />
                   ) : (
@@ -627,7 +629,7 @@ export default function HomePage() {
               </div>
               {communityUser ? (
                 <div className="text-left hidden sm:block">
-                  <div className="text-[11px] font-bold text-white leading-none max-w-[100px] truncate">{communityUser.displayName || communityUser.username}</div>
+                  <div className="text-[11px] font-bold leading-none max-w-[100px] truncate" style={levelNameStyle(communityUser.level, communityUser.levelStyle) || { color: "#ffffff" }}>{communityUser.displayName || communityUser.username}</div>
                   <div className="flex items-center gap-1 mt-0.5">
                     <Coins className="w-2.5 h-2.5 text-amber-400" />
                     <span className="text-[9px] font-bold text-amber-300 leading-none">{communityUser.balance.toLocaleString("vi-VN")}</span>
@@ -645,7 +647,7 @@ export default function HomePage() {
                 <div className="absolute right-0 mt-2.5 w-60 glass rounded-2xl p-3 shadow-2xl z-50 animate-pop-in overflow-hidden">
                   <div className="absolute inset-x-0 top-0 h-px grad-hairline" />
                   <div className="flex items-center gap-3 pb-3 border-b border-white/[0.06]">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-gradient-to-tr from-indigo-500 via-violet-500 to-fuchsia-500 overflow-hidden">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden ${communityUser.avatarUrl ? "bg-[#15151f]" : "bg-gradient-to-tr from-indigo-500 via-violet-500 to-fuchsia-500"}`}>
                       {communityUser.avatarUrl ? (
                         <img src={communityUser.avatarUrl} alt="" className="w-full h-full object-cover" />
                       ) : (
@@ -653,7 +655,7 @@ export default function HomePage() {
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-extrabold text-white truncate">{communityUser.displayName || communityUser.username}</div>
+                      <div className="text-sm font-extrabold truncate" style={levelNameStyle(communityUser.level, communityUser.levelStyle) || { color: "#ffffff" }}>{communityUser.displayName || communityUser.username}</div>
                       {/* Trạng thái dạng select gọn ngay dưới tên */}
                       <div className="relative mt-0.5">
                         <button
@@ -687,6 +689,8 @@ export default function HomePage() {
                       </div>
                     </div>
                   </div>
+                  {/* Tiến trình Level (XP) + Rank (RP) */}
+                  <HeaderLevelProgress />
                   <button
                     onClick={() => { setShowProfileDropdown(false); setShowWallet(true); }}
                     className="group/wallet w-full flex items-center gap-2.5 px-3 py-2.5 mt-1 mb-1 rounded-xl bg-gradient-to-r from-amber-500/[0.12] to-orange-500/[0.06] border border-amber-500/20 hover:border-amber-500/40 transition-all cursor-pointer text-left"
