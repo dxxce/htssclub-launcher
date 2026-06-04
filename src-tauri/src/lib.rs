@@ -4859,6 +4859,243 @@ fn quit_app(app: tauri::AppHandle) {
 
 
 
+// ──────────────────────────────────────────────────────────────────────────
+// Chia sẻ màn hình kiểu Discord: liệt kê + capture nguồn ở Rust rồi đẩy frame
+// (JPEG base64) sang frontend qua event. Frontend vẽ lên canvas và publish lên
+// LiveKit. Nhờ vậy KHÔNG dùng getDisplayMedia → không có hộp thoại / thanh
+// "đang chia sẻ" của WebView2.
+// ──────────────────────────────────────────────────────────────────────────
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+
+#[derive(Debug, Serialize)]
+struct CaptureSource {
+    id: String,           // "monitor:0" hoặc "window:12345"
+    kind: String,         // "monitor" | "window"
+    name: String,
+    thumbnail: String,    // data URL JPEG
+}
+
+// Cờ dừng capture hiện tại (generation tăng mỗi lần start để loop cũ tự thoát).
+static CAPTURE_RUNNING: AtomicBool = AtomicBool::new(false);
+static CAPTURE_GEN: AtomicU64 = AtomicU64::new(0);
+
+fn rgba_to_jpeg_dataurl(img: &image::RgbaImage, max_w: u32, quality: u8) -> Option<String> {
+    use image::codecs::jpeg::JpegEncoder;
+    let (w, h) = (img.width(), img.height());
+    if w == 0 || h == 0 { return None; }
+    // resize nếu rộng hơn max_w để giảm dữ liệu
+    let resized;
+    let src: &image::RgbaImage = if max_w > 0 && w > max_w {
+        let nh = ((h as f32) * (max_w as f32) / (w as f32)).round() as u32;
+        resized = image::imageops::resize(img, max_w, nh.max(1), image::imageops::FilterType::Triangle);
+        &resized
+    } else {
+        img
+    };
+    let rgb = image::DynamicImage::ImageRgba8(src.clone()).to_rgb8();
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut enc = JpegEncoder::new_with_quality(&mut buf, quality);
+        if enc.encode(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8).is_err() {
+            return None;
+        }
+    }
+    Some(format!("data:image/jpeg;base64,{}", general_purpose::STANDARD.encode(&buf)))
+}
+
+/// Liệt kê màn hình + cửa sổ (kèm ảnh thu nhỏ) cho picker tự vẽ.
+///
+/// Lưu ý: `capture_image()` của xcap trên Windows dùng GDI `PrintWindow` —
+/// với 1 vài cửa sổ (đặc biệt app tăng tốc phần cứng) nó RẤT chậm hoặc treo.
+/// Nếu chụp tuần tự, chỉ cần 1 cửa sổ treo là cả lệnh đứng → picker quay mãi.
+/// Vì vậy: chụp thumbnail cửa sổ SONG SONG có hạn thời gian (budget), và LUÔN
+/// liệt kê cửa sổ kể cả khi chưa kịp có thumbnail.
+#[tauri::command]
+async fn list_capture_sources() -> Result<Vec<CaptureSource>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut out: Vec<CaptureSource> = Vec::new();
+
+        // ── Màn hình (nhanh, ít cái) ──
+        if let Ok(monitors) = xcap::Monitor::all() {
+            for (i, m) in monitors.iter().enumerate() {
+                let name = m
+                    .friendly_name()
+                    .or_else(|_| m.name())
+                    .unwrap_or_else(|_| format!("Màn hình {}", i + 1));
+                let thumb = m
+                    .capture_image()
+                    .ok()
+                    .and_then(|img| rgba_to_jpeg_dataurl(&img, 320, 60))
+                    .unwrap_or_default();
+                out.push(CaptureSource {
+                    id: format!("monitor:{}", i),
+                    kind: "monitor".into(),
+                    name: format!("Màn hình: {}", name),
+                    thumbnail: thumb,
+                });
+            }
+        }
+
+        // ── Cửa sổ: gom metadata (nhanh) trước, rồi chụp thumbnail song song ──
+        if let Ok(windows) = xcap::Window::all() {
+            // (id, nhãn) giữ đúng thứ tự z-order để hiển thị.
+            let mut ordered: Vec<(u32, String)> = Vec::new();
+            let (tx, rx) = std::sync::mpsc::channel::<(u32, String)>();
+            let mut spawned = 0usize;
+
+            for w in windows.into_iter() {
+                if w.is_minimized().unwrap_or(false) {
+                    continue;
+                }
+                // Ưu tiên title (rẻ). Chỉ gọi app_name() khi title rỗng — vì app_name()
+                // gọi GetModuleBaseNameW, hay lỗi ACCESS_DENIED với tiến trình quyền cao
+                // và xcap ghi log ERROR gây nhiễu.
+                let title = w.title().unwrap_or_default();
+                let label = if !title.trim().is_empty() {
+                    title
+                } else {
+                    let app_name = w.app_name().unwrap_or_default();
+                    if app_name.trim().is_empty() {
+                        continue;
+                    }
+                    app_name
+                };
+                let id = w.id().unwrap_or(0);
+                if id == 0 {
+                    continue;
+                }
+                ordered.push((id, label));
+
+                // Chụp thumbnail trong thread riêng để 1 cửa sổ treo không chặn cả lệnh.
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    let thumb = w
+                        .capture_image()
+                        .ok()
+                        .and_then(|img| rgba_to_jpeg_dataurl(&img, 320, 55))
+                        .unwrap_or_default();
+                    let _ = tx.send((id, thumb));
+                });
+                spawned += 1;
+            }
+            drop(tx); // để rx kết thúc khi mọi thread đã gửi
+
+            // Thu thập thumbnail trong ngân sách thời gian (tối đa ~4s).
+            let mut thumbs: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+            while thumbs.len() < spawned {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                match rx.recv_timeout(remaining) {
+                    Ok((id, thumb)) => {
+                        thumbs.insert(id, thumb);
+                    }
+                    Err(_) => break, // timeout hoặc hết kênh
+                }
+            }
+
+            for (id, label) in ordered {
+                out.push(CaptureSource {
+                    id: format!("window:{}", id),
+                    kind: "window".into(),
+                    name: label,
+                    thumbnail: thumbs.remove(&id).unwrap_or_default(),
+                });
+            }
+        }
+
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Bắt đầu capture 1 nguồn và đẩy frame qua event "screen-frame".
+/// `source_id` dạng "monitor:0" / "window:123". fps & max_width giới hạn tải.
+#[tauri::command]
+async fn start_screen_capture(
+    app: tauri::AppHandle,
+    source_id: String,
+    fps: Option<u32>,
+    max_width: Option<u32>,
+    quality: Option<u8>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    // dừng loop cũ nếu có
+    CAPTURE_RUNNING.store(false, Ordering::SeqCst);
+    let my_gen = CAPTURE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    CAPTURE_RUNNING.store(true, Ordering::SeqCst);
+
+    let fps = fps.unwrap_or(15).clamp(1, 60);
+    let max_width = max_width.unwrap_or(1280).clamp(320, 2560);
+    let quality = quality.unwrap_or(55).clamp(20, 90);
+    let frame_interval = std::time::Duration::from_millis((1000 / fps) as u64);
+
+    let running = Arc::new(AtomicBool::new(true));
+    let _ = running;
+
+    std::thread::spawn(move || {
+        // Phân giải nguồn 1 lần.
+        enum Src { Monitor(xcap::Monitor), Window(xcap::Window) }
+        let src: Option<Src> = (|| {
+            if let Some(rest) = source_id.strip_prefix("monitor:") {
+                let idx: usize = rest.parse().ok()?;
+                let monitors = xcap::Monitor::all().ok()?;
+                monitors.into_iter().nth(idx).map(Src::Monitor)
+            } else if let Some(rest) = source_id.strip_prefix("window:") {
+                let wid: u32 = rest.parse().ok()?;
+                let windows = xcap::Window::all().ok()?;
+                windows.into_iter().find(|w| w.id().unwrap_or(0) == wid).map(Src::Window)
+            } else {
+                None
+            }
+        })();
+
+        let src = match src {
+            Some(s) => s,
+            None => {
+                let _ = app.emit("screen-capture-error", "Không tìm thấy nguồn chia sẻ.");
+                return;
+            }
+        };
+
+        loop {
+            // dừng nếu bị thay thế bởi lần start mới hoặc gọi stop.
+            if !CAPTURE_RUNNING.load(Ordering::SeqCst) || CAPTURE_GEN.load(Ordering::SeqCst) != my_gen {
+                break;
+            }
+            let started = std::time::Instant::now();
+            let img = match &src {
+                Src::Monitor(m) => m.capture_image().ok(),
+                Src::Window(w) => w.capture_image().ok(),
+            };
+            if let Some(img) = img {
+                if let Some(data_url) = rgba_to_jpeg_dataurl(&img, max_width, quality) {
+                    let _ = app.emit("screen-frame", data_url);
+                }
+            }
+            let elapsed = started.elapsed();
+            if elapsed < frame_interval {
+                std::thread::sleep(frame_interval - elapsed);
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_screen_capture() -> Result<(), String> {
+    CAPTURE_RUNNING.store(false, Ordering::SeqCst);
+    CAPTURE_GEN.fetch_add(1, Ordering::SeqCst);
+    Ok(())
+}
+
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -5244,13 +5481,19 @@ pub fn run() {
         browser_hide,
         browser_close,
         browser_hide_all,
-        browser_close_all
+        browser_close_all,
+        list_capture_sources,
+        start_screen_capture,
+        stop_screen_capture
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
             .level(log::LevelFilter::Info)
+            // xcap ghi ERROR khi không đọc được tên tiến trình của cửa sổ quyền cao
+            // (ACCESS_DENIED) — vô hại, đã unwrap_or_default. Tắt cho đỡ nhiễu.
+            .level_for("xcap", log::LevelFilter::Off)
             .build(),
         )?;
       }

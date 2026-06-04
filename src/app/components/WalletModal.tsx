@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 import { walletApi, usersApi, type CommunityUser, type Transaction } from "../lib/communityApi";
 import { useCommunityStore } from "../store/useCommunityStore";
+import { playTransferFailSound } from "../lib/notifySounds";
+import TransferDetailModal from "./TransferDetailModal";
 import { toast } from "./Toast";
 
 interface Props {
@@ -50,6 +52,8 @@ export default function WalletModal({ onClose, presetTarget }: Props) {
   const refreshMe = useCommunityStore((s) => s.refreshMe);
   const [tab, setTab] = useState<Tab>(presetTarget ? "transfer" : "overview");
   const balance = me?.balance ?? 0;
+  // Chi tiết giao dịch chuyển xu: { transferId, success? } → mở TransferDetailModal.
+  const [detail, setDetail] = useState<{ transferId: string; success?: boolean } | null>(null);
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-6 bg-black/70 backdrop-blur-sm animate-fade-in" onMouseDown={onClose}>
@@ -104,10 +108,15 @@ export default function WalletModal({ onClose, presetTarget }: Props) {
         {/* Body */}
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-5">
           {tab === "overview" && <OverviewTab balance={balance} onTransfer={() => setTab("transfer")} onHistory={() => setTab("history")} />}
-          {tab === "transfer" && <TransferTab me={me} balance={balance} refreshMe={refreshMe} onDone={() => setTab("history")} presetTarget={presetTarget} />}
-          {tab === "history" && <HistoryTab />}
+          {tab === "transfer" && <TransferTab me={me} balance={balance} refreshMe={refreshMe} onDone={() => setTab("history")} presetTarget={presetTarget} onTransferred={(transferId) => setDetail({ transferId, success: true })} />}
+          {tab === "history" && <HistoryTab onViewTransfer={(transferId) => setDetail({ transferId })} />}
         </div>
       </div>
+
+      {/* Chi tiết giao dịch chuyển xu */}
+      {detail && (
+        <TransferDetailModal transferId={detail.transferId} success={detail.success} onClose={() => setDetail(null)} />
+      )}
     </div>
   );
 }
@@ -143,7 +152,7 @@ function OverviewTab({ balance, onTransfer, onHistory }: { balance: number; onTr
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-function TransferTab({ me, balance, refreshMe, onDone, presetTarget }: { me: CommunityUser | null; balance: number; refreshMe: () => Promise<void>; onDone: () => void; presetTarget?: CommunityUser | null }) {
+function TransferTab({ me, balance, refreshMe, onDone, presetTarget, onTransferred }: { me: CommunityUser | null; balance: number; refreshMe: () => Promise<void>; onDone: () => void; presetTarget?: CommunityUser | null; onTransferred?: (transferId: string) => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CommunityUser[]>([]);
   const [searching, setSearching] = useState(false);
@@ -182,13 +191,18 @@ function TransferTab({ me, balance, refreshMe, onDone, presetTarget }: { me: Com
     if (!canSend || !target) return;
     setBusy(true);
     try {
-      await toast.promise(
-        walletApi.transfer(target.id, amountNum, note.trim() || undefined).then(() => refreshMe()),
+      const result = await toast.promise(
+        walletApi.transfer(target.id, amountNum, note.trim() || undefined).then(async (r) => { await refreshMe(); return r; }),
         { loading: "Đang chuyển xu...", success: `Đã chuyển ${amountNum.toLocaleString("vi-VN")} xu!`, error: (e) => e?.message || "Chuyển xu thất bại." }
       );
+      // Tiếng "thành công" do sự kiện wallet:transaction phát (tránh kêu 2 lần).
       setTarget(null); setQuery(""); setAmount(""); setNote("");
-      onDone();
-    } catch { /* toast */ } finally { setBusy(false); }
+      // Hiện màn hình chi tiết giao dịch (gọi API detail) thay vì chỉ nhảy tab.
+      if (result?.transferId) onTransferred?.(result.transferId);
+      else onDone();
+    } catch {
+      playTransferFailSound();
+    } finally { setBusy(false); }
   };
 
   const inputCls = "w-full px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-sm text-neutral-100 placeholder:text-neutral-600 outline-none focus:border-violet-500/50 transition-all";
@@ -247,10 +261,34 @@ function TransferTab({ me, balance, refreshMe, onDone, presetTarget }: { me: Com
         <Coins className="w-4 h-4 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2" />
         <input type="number" min={1} max={balance} value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="0" className={`${inputCls} pl-9`} />
       </div>
-      <div className="flex gap-1.5 mb-3">
-        {[10, 50, 100, 500].map((v) => (
-          <button key={v} onClick={() => setAmount(String(Math.min(v, balance)))} disabled={v > balance} className="flex-1 py-1.5 rounded-lg bg-white/[0.04] border border-white/10 text-[11px] font-bold text-neutral-300 hover:bg-white/[0.08] hover:text-white transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed">{v}</button>
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {[100, 200, 500, 1000, 5000].map((v) => (
+          <button
+            key={v}
+            onClick={() => setAmount((prev) => {
+              const cur = parseInt(prev || "0", 10) || 0;
+              return String(Math.min(cur + v, balance));
+            })}
+            disabled={v > balance}
+            className="flex-1 min-w-[56px] py-1.5 rounded-lg bg-white/[0.04] border border-white/10 text-[11px] font-bold text-neutral-300 hover:bg-white/[0.08] hover:text-white transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            +{v.toLocaleString("vi-VN")}
+          </button>
         ))}
+        <button
+          onClick={() => setAmount(String(balance))}
+          disabled={balance <= 0}
+          className="flex-1 min-w-[56px] py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] font-bold text-amber-300 hover:bg-amber-500/20 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          Tối đa
+        </button>
+        <button
+          onClick={() => setAmount("")}
+          disabled={!amount}
+          className="flex-1 min-w-[56px] py-1.5 rounded-lg bg-white/[0.04] border border-white/10 text-[11px] font-bold text-neutral-400 hover:bg-rose-500/15 hover:text-rose-300 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          Xoá
+        </button>
       </div>
 
       <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={120} placeholder="Lời nhắn (tuỳ chọn)" className={`${inputCls} mb-3`} />
@@ -265,7 +303,7 @@ function TransferTab({ me, balance, refreshMe, onDone, presetTarget }: { me: Com
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-function HistoryTab() {
+function HistoryTab({ onViewTransfer }: { onViewTransfer?: (transferId: string) => void }) {
   const [txs, setTxs] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -303,12 +341,17 @@ function HistoryTab() {
         const meta = TX_META[t.type] || TX_META.SPEND;
         const Icon = meta.icon;
         const positive = t.amount >= 0;
+        const clickable = t.type === "TRANSFER" && !!t.transferId;
         return (
-          <div key={t.id || `tx-${i}`} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+          <div
+            key={t.id || `tx-${i}`}
+            onClick={clickable ? () => onViewTransfer?.(t.transferId!) : undefined}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/[0.02] transition-colors ${clickable ? "hover:bg-white/[0.06] cursor-pointer" : "hover:bg-white/[0.04]"}`}
+          >
             <div className={`w-9 h-9 rounded-xl ${meta.bg} flex items-center justify-center flex-shrink-0`}><Icon className={`w-4.5 h-4.5 ${meta.color}`} /></div>
             <div className="flex-1 min-w-0">
               <div className="text-[13px] font-bold text-neutral-100 truncate">{meta.label}{t.reason && <span className="text-neutral-500 font-normal"> · {t.reason}</span>}</div>
-              <div className="text-[10px] text-neutral-600">{fmtDate(t.createdAt)}</div>
+              <div className="text-[10px] text-neutral-600">{fmtDate(t.createdAt)}{clickable && <span className="text-violet-400/70"> · Xem chi tiết</span>}</div>
             </div>
             <div className="text-right flex-shrink-0">
               <div className={`text-[13px] font-black ${positive ? "text-emerald-300" : "text-rose-300"}`}>{positive ? "+" : ""}{t.amount.toLocaleString("vi-VN")}</div>

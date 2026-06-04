@@ -2,7 +2,7 @@
 
 import { io, Socket } from "socket.io-client";
 import { getAccessToken, getValidAccessToken } from "./communityApi";
-import type { Message, NotificationItem, PresenceStatus, VoiceMember, Channel, MemberRole } from "./communityApi";
+import type { Message, NotificationItem, PresenceStatus, VoiceMember, Channel, MemberRole, DmMessage, Transaction } from "./communityApi";
 
 // WebSocket gốc của backend (KHÔNG có hậu tố /api).
 const WS_ORIGIN = "https://appapi.htss.club";
@@ -58,10 +58,10 @@ export interface VoiceMemberStateEvent {
   speaking?: boolean;
   streaming?: boolean;
 }
-// Đồng bộ hồ sơ user (đổi tên/avatar) tới mọi server chung.
+// Đồng bộ hồ sơ user (đổi tên/avatar/bio/statusMessage) tới mọi server chung.
 export interface UserUpdatedEvent {
   serverId?: string;
-  user: { id: string; username?: string; displayName?: string; avatarUrl?: string };
+  user: { id: string; username?: string; displayName?: string; avatarUrl?: string; bio?: string; statusMessage?: string };
 }
 // Đồng bộ thông tin server (đổi tên/icon).
 export interface ServerUpdatedEvent {
@@ -77,6 +77,14 @@ export interface ServerMemberEvent {
   role?: MemberRole;
   nickname?: string;
   reason?: string;
+  // member card đầy đủ (mới): cho phép render ngay không cần fetch lại danh sách.
+  member?: {
+    userId: string;
+    role?: MemberRole;
+    nickname?: string;
+    joinedAt?: string;
+    user?: { id: string; username?: string; displayName?: string; avatarUrl?: string };
+  };
 }
 export interface ServerAnnouncementEvent {
   serverId: string;
@@ -88,6 +96,38 @@ export interface ServerOwnershipEvent {
   serverId: string;
   from: string;
   to: string;
+}
+// ── Bạn bè (room cá nhân) ──
+export interface FriendEventPayload {
+  fromUserId: string;
+  from?: { id: string; username?: string; displayName?: string; avatarUrl?: string };
+  requestId?: string;
+}
+// ── DM (room cá nhân) ──
+export interface DmNewEvent {
+  conversationId: string;
+  message: DmMessage;
+  from?: { id: string; username?: string; displayName?: string; avatarUrl?: string };
+  unread?: number;
+}
+export interface DmReadEvent {
+  conversationId: string;
+  byUserId: string;
+  at?: string;
+}
+export interface DmTypingEvent {
+  conversationId: string;
+  userId: string;
+  isTyping: boolean;
+}
+export interface DmDeletedEvent {
+  conversationId: string;
+  messageId: string;
+}
+// ── Ví xu (room cá nhân) ──
+export interface WalletTxEvent {
+  balance: number;
+  transaction: Transaction;
 }
 
 type ChatEventMap = {
@@ -114,8 +154,22 @@ type ChatEventMap = {
   "server:member-updated": (e: ServerMemberEvent) => void;
   "server:member-banned": (e: ServerMemberEvent) => void;
   "server:you-were-banned": (e: { serverId: string; reason?: string }) => void;
+  "server:deleted": (e: { serverId: string }) => void;
   "server:ownership-transferred": (e: ServerOwnershipEvent) => void;
   "server:announcement": (e: ServerAnnouncementEvent) => void;
+  // Bạn bè realtime (room cá nhân)
+  "friend:request-received": (e: FriendEventPayload) => void;
+  "friend:accepted": (e: FriendEventPayload) => void;
+  "friend:declined": (e: FriendEventPayload) => void;
+  "friend:removed": (e: FriendEventPayload) => void;
+  // DM realtime (room cá nhân)
+  "dm:new": (e: DmNewEvent) => void;
+  "dm:updated": (e: DmNewEvent) => void;
+  "dm:read": (e: DmReadEvent) => void;
+  "dm:typing": (e: DmTypingEvent) => void;
+  "dm:deleted": (e: DmDeletedEvent) => void;
+  // Ví xu realtime (room cá nhân)
+  "wallet:transaction": (e: WalletTxEvent) => void;
   typing: (e: TypingEvent) => void;
   "presence:changed": (e: PresenceChangedEvent) => void;
   "notification:new": (n: NotificationItem) => void;
@@ -215,6 +269,20 @@ export const chat = {
   typingStart: (channelId: string) => getChatSocket().emit("typing:start", { channelId }),
   typingStop: (channelId: string) => getChatSocket().emit("typing:stop", { channelId }),
   updatePresence: (status: PresenceStatus) => getChatSocket().emit("presence:update", { status }),
+  // ── DM ──
+  dmSend: (payload: { toUserId: string; content?: string; attachments?: any[]; replyToId?: string }): Promise<DmMessage> =>
+    new Promise((resolve, reject) => {
+      const s = getChatSocket();
+      const timer = setTimeout(() => reject(new Error("Hết thời gian gửi tin nhắn.")), 12000);
+      s.emit("dm:send", payload, (resp: any) => {
+        clearTimeout(timer);
+        if (resp && resp.error) { reject(new Error(resp.error?.message || resp.error)); return; }
+        resolve((resp?.message ?? resp) as DmMessage);
+      });
+    }),
+  dmTypingStart: (conversationId: string) => getChatSocket().emit("dm:typing:start", { conversationId }),
+  dmTypingStop: (conversationId: string) => getChatSocket().emit("dm:typing:stop", { conversationId }),
+  dmRead: (conversationId: string) => getChatSocket().emit("dm:read", { conversationId }),
 };
 
 // ── Voice namespace (/ws-voice) — LiveKit control plane (KHÔNG còn mesh) ────────

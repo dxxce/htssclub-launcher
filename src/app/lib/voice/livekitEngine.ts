@@ -4,7 +4,9 @@ import {
   Room,
   RoomEvent,
   Track,
+  LocalVideoTrack,
   type RemoteTrack,
+  type RemoteAudioTrack,
   type RemoteParticipant,
   type RemoteTrackPublication,
   type Participant,
@@ -14,6 +16,8 @@ import {
   type VoiceParticipantInfo,
 } from "./voiceEngine";
 import { getVoiceSettings } from "./voiceSettings";
+import { NoiseFilterProcessor } from "./noiseFilter";
+import { startTauriCapture, type TauriCapture } from "./tauriScreenCapture";
 import {
   connectVoice,
   disconnectVoice,
@@ -72,6 +76,10 @@ export class LivekitVoiceEngine {
   private unsub: Array<() => void> = [];
   private screenOn = false;
   private cameraOn = false;
+  private tauriCapture: TauriCapture | null = null;
+  private tauriPublished: LocalVideoTrack | null = null;
+  private micProcessor: NoiseFilterProcessor | null = null;
+  private audioCtx: AudioContext | null = null;
 
   constructor(private myUserId: string, private cb: LivekitCallbacks) {}
 
@@ -112,7 +120,20 @@ export class LivekitVoiceEngine {
   }
 
   private async connectRoom(creds: LivekitCreds) {
-    const room = new Room({ adaptiveStream: true, dynacast: true });
+    // AudioContext dùng chung: LiveKit cần nó để bật processor (lọc âm) và để
+    // chỉnh âm lượng từng người qua gainNode (mute/volume đáng tin cậy).
+    let audioContext: AudioContext | undefined;
+    try {
+      const AC = window.AudioContext || (window as any).webkitAudioContext;
+      this.audioCtx = new AC();
+      audioContext = this.audioCtx;
+    } catch { this.audioCtx = null; }
+
+    const room = new Room({
+      adaptiveStream: true,
+      dynacast: true,
+      ...(audioContext ? { webAudioMix: { audioContext } } : {}),
+    });
     this.room = room;
 
     room
@@ -122,7 +143,7 @@ export class LivekitVoiceEngine {
       .on(RoomEvent.ParticipantDisconnected, (p: RemoteParticipant) => this.cb.onParticipantLeft(p.identity))
       .on(RoomEvent.TrackSubscribed, (track: RemoteTrack, pub: RemoteTrackPublication, p: RemoteParticipant) => {
         if (track.kind === Track.Kind.Audio) {
-          this.sink.attach(p.identity, new MediaStream([track.mediaStreamTrack]));
+          this.sink.attach(p.identity, track as RemoteAudioTrack);
         } else if (track.kind === Track.Kind.Video) {
           const source = pub.source === Track.Source.Camera ? "camera" : "screen";
           this.cb.onVideoTrack(p.identity, track.mediaStreamTrack, source);
@@ -146,13 +167,31 @@ export class LivekitVoiceEngine {
 
     try {
       await room.connect(creds.url, creds.token);
+      // AudioContext có thể ở trạng thái "suspended" → resume để phát + processor chạy.
+      if (this.audioCtx && this.audioCtx.state === "suspended") {
+        try { await this.audioCtx.resume(); } catch {/* ignore */}
+      }
+      // LiveKit gọi acquireAudioContext() KHÔNG await trong connect() → audioContext
+      // có thể chưa kịp gắn vào localParticipant. Gắn thủ công cho chắc.
+      if (this.audioCtx) {
+        try { (room.localParticipant as any).setAudioContext?.(this.audioCtx); } catch {/* ignore */}
+      }
       const s = getVoiceSettings();
+      // QUAN TRỌNG: KHÔNG truyền processor vào setMicrophoneEnabled. LiveKit áp
+      // processor NGAY trong lúc tạo track (trước khi gắn audioContext) → luôn
+      // ném "Audio context needs to be set...". Vì vậy bật mic trước (không lọc),
+      // rồi gắn audioContext + processor lên track sau.
       await room.localParticipant.setMicrophoneEnabled(true, {
         echoCancellation: s.echoCancellation,
         noiseSuppression: s.noiseSuppression,
         autoGainControl: s.autoGainControl,
         ...(s.inputDeviceId ? { deviceId: { exact: s.inputDeviceId } } : {}),
       });
+      if (s.advancedFilter) {
+        await this.enableMicFilter(s.filterStrength);
+      }
+      // áp loa đã chọn cho các track audio (đã/đang gắn).
+      if (s.outputDeviceId) this.setOutputDevice(s.outputDeviceId);
     } catch (e: any) {
       this.cb.onError(e?.message || "Kết nối phòng thoại LiveKit thất bại.");
       throw e;
@@ -207,6 +246,89 @@ export class LivekitVoiceEngine {
     this.sink.setUserVolume(userId, volume);
   }
 
+  // Cập nhật độ mạnh lọc âm khi đang nói (nếu processor đang bật).
+  setFilterStrength(strength: number) {
+    this.micProcessor?.setStrength(strength);
+  }
+
+  // Bật/tắt lọc âm nâng cao trên track mic đang publish (gắn sau khi mic đã có
+  // audioContext → tránh lỗi "Audio context needs to be set...").
+  async enableMicFilter(strength: number): Promise<boolean> {
+    if (!this.room) return false;
+    try {
+      const pub = this.room.localParticipant.getTrackPublication(Track.Source.Microphone);
+      const track: any = pub?.track;
+      if (!track) return false;
+      // đảm bảo track có audioContext dùng chung trước khi gắn processor.
+      if (this.audioCtx && typeof track.setAudioContext === "function") {
+        track.setAudioContext(this.audioCtx);
+      }
+      if (!this.micProcessor) this.micProcessor = new NoiseFilterProcessor(strength);
+      else this.micProcessor.setStrength(strength);
+      await track.setProcessor(this.micProcessor);
+      return true;
+    } catch (e: any) {
+      this.cb.onError(e?.message || "Không bật được lọc âm nâng cao.");
+      try { await this.micProcessor?.destroy(); } catch {/* ignore */}
+      this.micProcessor = null;
+      return false;
+    }
+  }
+
+  async disableMicFilter() {
+    if (!this.room) return;
+    try {
+      const pub = this.room.localParticipant.getTrackPublication(Track.Source.Microphone);
+      const track: any = pub?.track;
+      if (track && typeof track.stopProcessor === "function") {
+        await track.stopProcessor();
+      }
+    } catch {/* ignore */}
+    try { await this.micProcessor?.destroy(); } catch {/* ignore */}
+    this.micProcessor = null;
+  }
+
+  setOutputDevice(deviceId: string) {
+    // Với webAudioMix, đổi loa nên đi qua room (áp cho cả audio context mix).
+    if (this.room && deviceId) {
+      this.room.switchActiveDevice("audiooutput", deviceId).catch(() => {
+        // fallback: set trực tiếp trên từng track.
+        this.sink.setOutputDevice(deviceId);
+      });
+    } else {
+      this.sink.setOutputDevice(deviceId);
+    }
+  }
+
+  // ── chia sẻ màn hình kiểu Discord (capture qua Rust, không dùng getDisplayMedia) ──
+  async startTauriScreenShare(sourceId: string, opts?: { width?: number; height?: number; fps?: number }): Promise<boolean> {
+    if (!this.room) return false;
+    try {
+      const fps = opts?.fps ?? 15;
+      const capture = await startTauriCapture({
+        sourceId,
+        fps,
+        maxWidth: opts?.width ?? 1280,
+        quality: 60,
+      });
+      this.tauriCapture = capture;
+      // userProvidedTrack = true: track từ canvas, SDK KHÔNG được tự release/reacquire
+      // (không thể lấy lại track canvas qua getUserMedia).
+      const lkTrack = new LocalVideoTrack(capture.track, undefined, true);
+      this.tauriPublished = lkTrack;
+      await this.room.localParticipant.publishTrack(lkTrack, { source: Track.Source.ScreenShare });
+      this.screenOn = true;
+      voice.streamStart("screen");
+      return true;
+    } catch (e: any) {
+      try { await this.tauriCapture?.stop(); } catch {/* ignore */}
+      this.tauriCapture = null;
+      this.tauriPublished = null;
+      this.cb.onError(e?.message || "Không bắt đầu được chia sẻ màn hình.");
+      return false;
+    }
+  }
+
   // ── chia sẻ màn hình / camera ──
   async startScreenShare(opts?: { width?: number; height?: number; fps?: number; surface?: "monitor" | "window" }): Promise<boolean> {
     if (!this.room) return false;
@@ -247,7 +369,15 @@ export class LivekitVoiceEngine {
   async stopStream() {
     if (!this.room) return;
     try {
-      if (this.screenOn) await this.room.localParticipant.setScreenShareEnabled(false);
+      // Capture qua Rust (Tauri) → unpublish + dừng capture.
+      if (this.tauriPublished) {
+        try { await this.room.localParticipant.unpublishTrack(this.tauriPublished); } catch {/* ignore */}
+        this.tauriPublished = null;
+      }
+      if (this.tauriCapture) {
+        try { await this.tauriCapture.stop(); } catch {/* ignore */}
+        this.tauriCapture = null;
+      }
       if (this.cameraOn) await this.room.localParticipant.setCameraEnabled(false);
     } catch {/* ignore */}
     const wasStreaming = this.screenOn || this.cameraOn;
@@ -260,6 +390,7 @@ export class LivekitVoiceEngine {
 
   // Lấy video track local đang publish (để hiện preview của chính mình).
   getLocalVideoTrack(): MediaStreamTrack | null {
+    if (this.tauriCapture?.track) return this.tauriCapture.track;
     if (!this.room) return null;
     const pubs = this.room.localParticipant.videoTrackPublications;
     for (const pub of pubs.values()) {
@@ -276,9 +407,16 @@ export class LivekitVoiceEngine {
   private async cleanup() {
     this.unsub.forEach((u) => { try { u(); } catch {/* ignore */} });
     this.unsub = [];
+    try { await this.tauriCapture?.stop(); } catch {/* ignore */}
+    this.tauriCapture = null;
+    this.tauriPublished = null;
     try { await this.room?.disconnect(); } catch {/* ignore */}
     this.room = null;
+    try { await this.micProcessor?.destroy(); } catch {/* ignore */}
+    this.micProcessor = null;
     this.sink.clear();
+    try { await this.audioCtx?.close(); } catch {/* ignore */}
+    this.audioCtx = null;
     this.screenOn = false;
     this.cameraOn = false;
     this.channelId = null;

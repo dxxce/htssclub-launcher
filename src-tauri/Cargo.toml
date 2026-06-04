@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.9.14"
+version = "0.9.17"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -35,3 +35,5 @@ uuid = { version = "1.8", features = ["v4"] }
 sha2 = "0.10"
 futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }
+xcap = "0.9.4"
+image = "0.25"

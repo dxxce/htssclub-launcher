@@ -11,6 +11,7 @@ import {
   type VoiceSettings,
 } from "../lib/voice/voiceSettings";
 import { NoiseFilter } from "../lib/voice/noiseFilter";
+import { useVoiceStore } from "../store/useVoiceStore";
 import { toast } from "./Toast";
 
 // Modal cài đặt thoại: chọn thiết bị đầu vào/ra + bật lọc âm nâng cao (kiểu Krisp).
@@ -32,6 +33,13 @@ export default function VoiceSettingsModal({ onClose }: { onClose: () => void })
     const next = setVoiceSettings(patch);
     setSettings({ ...next });
     if (patch.filterStrength != null && filterRef.current) filterRef.current.setStrength(patch.filterStrength);
+    // Áp dụng trực tiếp khi đang ở trong phòng thoại.
+    try {
+      const vs = useVoiceStore.getState();
+      if (patch.filterStrength != null) vs.applyFilterStrength(patch.filterStrength);
+      if (patch.advancedFilter != null) vs.applyAdvancedFilter(patch.advancedFilter, next.filterStrength);
+      if (patch.outputDeviceId != null) vs.applyOutputDevice(patch.outputDeviceId);
+    } catch {/* ignore */}
   };
 
   // Lấy danh sách thiết bị (cần quyền micro để có nhãn).
@@ -56,7 +64,7 @@ export default function VoiceSettingsModal({ onClose }: { onClose: () => void })
   const stopTest = () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
-    filterRef.current?.destroy();
+    filterRef.current?.dispose();
     filterRef.current = null;
     try { ctxRef.current?.close(); } catch {/* ignore */}
     ctxRef.current = null;

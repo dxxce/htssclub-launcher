@@ -1,3 +1,51 @@
+### 👾 Bản cập nhật v0.9.17
+
+**💬 Tin nhắn riêng (mới)**
+- Thêm khu Tin nhắn: nhắn riêng 1-1 với bạn bè, danh sách hội thoại + khung chat thời gian thực.
+- Hiện trạng thái "đang nhập...", huy hiệu số tin chưa đọc, gửi nhanh bằng Enter.
+- Nút "Nhắn tin" ngay trong hồ sơ người dùng để mở hội thoại.
+
+**👥 Bạn bè & hồ sơ**
+- Lời mời kết bạn, chấp nhận/từ chối, hủy kết bạn cập nhật ngay theo thời gian thực.
+- Hồ sơ hiển thị câu trạng thái (dạng bong bóng cạnh ảnh) và giới thiệu; đồng bộ tức thì khi đổi.
+- Hiện câu trạng thái dưới tên trong danh sách thành viên.
+
+**🔄 Đồng bộ & ví**
+- Số dư ví cập nhật realtime khi nạp/tiêu/thưởng/chuyển xu.
+- Đồng bộ tên/avatar/giới thiệu người dùng ở mọi nơi khi có thay đổi.
+
+### 👾 Bản cập nhật v0.9.16
+
+**🔊 Trò chuyện thoại**
+- Thêm hiệu ứng âm thanh khi vào / rời phòng và khi bắt đầu / dừng chia sẻ.
+- Sửa lỗi phát âm "tham gia" hai lần; âm chỉ kêu khi đã kết nối thành công.
+- Sửa lỗi khi tắt tiếng một người rồi chỉnh âm lượng lại không nghe được — giờ điều chỉnh âm lượng từng người chạy đúng.
+- Cải thiện lọc âm nâng cao: noise gate thích nghi theo nền, bám giọng tốt hơn, ít cắt cụt từ; bật/tắt và chỉnh độ mạnh áp dụng ngay khi đang nói.
+- Sửa lỗi không bật được lọc âm nâng cao (lỗi audio context).
+
+**🖥️ Chia sẻ màn hình**
+- Thiết kế lại trình xem livestream: thanh thông tin tự ẩn, đồng hồ thời lượng, nút toàn màn hình, đóng bằng phím Esc.
+- Sửa danh sách nguồn chia sẻ bị treo / không tải được màn hình và cửa sổ.
+
+**🔄 Đồng bộ thời gian thực**
+- Thành viên mới vào server hiển thị ngay không cần tải lại.
+- Server bị chủ xoá sẽ tự biến mất khỏi giao diện thay vì còn "treo".
+
+### 👾 Bản cập nhật v0.9.15
+
+**🖥️ Chia sẻ màn hình (kiểu Discord)**
+- Thêm chia sẻ màn hình & cửa sổ ứng dụng ngay trong kênh thoại — không còn hộp thoại chọn nguồn của Windows, không còn thanh "đang chia sẻ màn hình".
+- Bảng chọn nguồn có ảnh xem trước từng màn hình / cửa sổ, chọn độ phân giải (720p/1080p/1440p) và khung hình (15/30/60fps).
+- Bấm vào người đang phát (huy hiệu 🔴 LIVE) để xem trực tiếp luồng chia sẻ của họ.
+- Hỗ trợ chia sẻ camera.
+
+**🔊 Trò chuyện thoại**
+- Chuyển toàn bộ thoại sang hạ tầng LiveKit (SFU) cho chất lượng ổn định và ít rớt hơn khi đông người.
+- Đồng bộ trạng thái đang phát / micro / tai nghe theo thời gian thực.
+
+**🎨 Ổn định**
+- Tối ưu liệt kê nguồn chia sẻ: nhanh hơn, không còn treo khi có cửa sổ phản hồi chậm.
+
 ### 👾 Bản cập nhật v0.9.14
 
 **💬 Tin nhắn cộng đồng**

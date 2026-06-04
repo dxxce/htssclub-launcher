@@ -4,6 +4,12 @@ import { create } from "zustand";
 import { useCommunityStore } from "./useCommunityStore";
 import type { VoiceParticipantInfo } from "../lib/voice/voiceEngine";
 import { LivekitVoiceEngine } from "../lib/voice/livekitEngine";
+import {
+  playJoinSound,
+  playLeaveSound,
+  playStreamStartSound,
+  playStreamStopSound,
+} from "../lib/voice/voiceSounds";
 
 export interface VoiceParticipantState extends VoiceParticipantInfo {
   speaking: boolean;
@@ -39,7 +45,10 @@ interface VoiceState {
   toggleMute: () => void;
   toggleDeafen: () => void;
   setUserVolume: (userId: string, volume: number) => void;
-  startScreenShare: (opts?: { width?: number; height?: number; fps?: number; surface?: "monitor" | "window" }) => Promise<void>;
+  applyFilterStrength: (strength: number) => void;
+  applyAdvancedFilter: (on: boolean, strength: number) => void;
+  applyOutputDevice: (deviceId: string) => void;
+  startScreenShare: (opts?: { sourceId?: string; width?: number; height?: number; fps?: number; surface?: "monitor" | "window" }) => Promise<void>;
   startCamera: () => Promise<void>;
   stopStream: () => Promise<void>;
 }
@@ -141,7 +150,13 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       });
 
       const callbacks = {
-        onConnected: () => set({ connected: true, connecting: false }),
+        onConnected: () => {
+          // onConnected có thể bắn 2 lần (LiveKit Room.Connected + socket connect).
+          // Chỉ phát âm + đổi trạng thái khi LẦN ĐẦU chuyển sang connected.
+          if (get().connected) { set({ connecting: false }); return; }
+          set({ connected: true, connecting: false });
+          playJoinSound();
+        },
         onDisconnected: () => { if (get().channelId === channelId) set({ connected: false }); },
         onParticipantsList: (list: VoiceParticipantInfo[]) => {
           const ids = new Set(list.map((p) => p.userId).filter(Boolean));
@@ -156,8 +171,14 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
             return changed ? { participants: next } : {};
           });
         },
-        onParticipantJoined: (p: VoiceParticipantInfo) => upsert(p),
-        onParticipantLeft: (userId: string) =>
+        onParticipantJoined: (p: VoiceParticipantInfo) => {
+          const existed = !!get().participants[p.userId];
+          upsert(p);
+          // chỉ kêu khi thực sự có người MỚI vào (và mình đã kết nối xong).
+          if (!existed && p.userId !== myUserId && get().connected) playJoinSound();
+        },
+        onParticipantLeft: (userId: string) => {
+          if (userId !== myUserId && get().participants[userId] && get().connected) playLeaveSound();
           set((s) => {
             if (userId === myUserId) return {};
             const next = { ...s.participants };
@@ -165,14 +186,22 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
             const videos = { ...s.videos };
             delete videos[userId];
             return { participants: next, videos };
-          }),
+          });
+        },
         onSpeaking: (userId: string, speaking: boolean) => setField(userId, { speaking }),
-        onState: (userId: string, st: { muted?: boolean; deafened?: boolean; streaming?: boolean }) =>
+        onState: (userId: string, st: { muted?: boolean; deafened?: boolean; streaming?: boolean }) => {
+          // phát tiếng khi NGƯỜI KHÁC bắt đầu / dừng chia sẻ.
+          if (typeof st.streaming === "boolean" && userId !== get().myUserId && get().connected) {
+            const was = get().participants[userId]?.streaming ?? false;
+            if (st.streaming && !was) playStreamStartSound();
+            else if (!st.streaming && was) playStreamStopSound();
+          }
           setField(userId, {
             ...(typeof st.muted === "boolean" ? { muted: st.muted } : {}),
             ...(typeof st.deafened === "boolean" ? { deafened: st.deafened } : {}),
             ...(typeof st.streaming === "boolean" ? { streaming: st.streaming } : {}),
-          }),
+          });
+        },
         onVideoTrack: (userId: string, track: MediaStreamTrack | null, source: "screen" | "camera") => {
           set((s) => {
             const videos = { ...s.videos };
@@ -206,12 +235,14 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
     },
 
     leave: async () => {
+      const wasConnected = get().connected;
       try {
         await engine?.leave();
         engine?.destroy();
       } catch {/* ignore */}
       engine = null;
       if (voiceChannelClosedUnsub) { voiceChannelClosedUnsub(); voiceChannelClosedUnsub = null; }
+      if (wasConnected) playLeaveSound();
       set({
         connected: false,
         connecting: false,
@@ -250,11 +281,29 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       engine?.setUserVolume(userId, v);
     },
 
-    startScreenShare: async (opts?: { width?: number; height?: number; fps?: number; surface?: "monitor" | "window" }) => {
+    applyFilterStrength: (strength) => {
+      engine?.setFilterStrength(strength);
+    },
+
+    applyAdvancedFilter: (on, strength) => {
       if (!engine) return;
-      const ok = await engine.startScreenShare(opts);
+      if (on) engine.enableMicFilter(strength).catch(() => {});
+      else engine.disableMicFilter().catch(() => {});
+    },
+
+    applyOutputDevice: (deviceId) => {
+      engine?.setOutputDevice(deviceId);
+    },
+
+    startScreenShare: async (opts?: { sourceId?: string; width?: number; height?: number; fps?: number; surface?: "monitor" | "window" }) => {
+      if (!engine) return;
+      // Có sourceId → chia sẻ kiểu Discord (capture qua Rust, không hộp thoại native).
+      const ok = opts?.sourceId
+        ? await engine.startTauriScreenShare(opts.sourceId, { width: opts.width, height: opts.height, fps: opts.fps })
+        : await engine.startScreenShare(opts);
       if (ok) {
         set({ selfStreaming: true });
+        playStreamStartSound();
         const me = get().myUserId;
         if (me) {
           setField(me, { streaming: true });
@@ -269,6 +318,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       const ok = await engine.startCamera();
       if (ok) {
         set({ selfStreaming: true });
+        playStreamStartSound();
         const me = get().myUserId;
         if (me) {
           setField(me, { streaming: true });
@@ -282,6 +332,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       if (!engine) return;
       await engine.stopStream();
       set({ selfStreaming: false });
+      playStreamStopSound();
       const me = get().myUserId;
       if (me) {
         setField(me, { streaming: false });

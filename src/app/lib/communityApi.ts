@@ -19,17 +19,24 @@ export type PresenceStatus = "ONLINE" | "IDLE" | "DND" | "OFFLINE";
 export type ChannelType = "TEXT" | "VOICE";
 export type MemberRole = "OWNER" | "ADMIN" | "MEMBER";
 
+export type FriendStatus = "NONE" | "FRIENDS" | "REQUEST_SENT" | "REQUEST_RECEIVED" | "BLOCKED" | "BLOCKED_BY" | "SELF";
+
 export interface CommunityUser {
   id: string;
   username: string;
   email?: string;
   displayName?: string;
   avatarUrl?: string;
+  bio?: string;            // mô tả ngắn (≤300 ký tự)
+  statusMessage?: string;  // dòng trạng thái / câu quote (≤128 ký tự)
   balance: number;
   status: AccountStatus;
   presence: PresenceStatus;
   lastSeenAt?: string;
   createdAt?: string;
+  // Trạng thái kết bạn theo góc nhìn người gọi (từ GET /users/:id, /users/search).
+  friendStatus?: FriendStatus;
+  friendRequestId?: string; // dùng cho nút Chấp nhận/Từ chối khi REQUEST_RECEIVED
 }
 
 export interface AuthResult {
@@ -126,8 +133,45 @@ export interface FriendEntry {
   state: "PENDING" | "ACCEPTED" | "BLOCKED";
   requesterId: string;
   addresseeId: string;
+  direction?: "incoming" | "outgoing"; // với lời mời đang chờ
   user?: CommunityUser;
   createdAt?: string;
+}
+
+// ── Direct Messages (DM) ─────────────────────────────────────────────────────
+export type DmMessageType = "USER" | "SYSTEM";
+
+export interface DmSystemData {
+  kind: string; // "COIN_TRANSFER" | ...
+  fromUserId?: string;
+  toUserId?: string;
+  amount?: number;
+  note?: string;
+  transferId?: string; // để bấm vào xem chi tiết giao dịch
+}
+
+export interface DmMessage {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  sender?: CommunityUser;
+  type: DmMessageType;
+  content: string;
+  systemData?: DmSystemData;
+  attachments?: Attachment[];
+  replyToId?: string;
+  replyTo?: ReplyPreview | null;
+  editedAt?: string;
+  createdAt: string;
+}
+
+export interface DmConversation {
+  id: string;
+  // người đối thoại (không phải mình)
+  user?: CommunityUser;
+  lastMessage?: DmMessage | null;
+  unread: number;
+  updatedAt?: string;
 }
 
 export interface Transaction {
@@ -138,7 +182,30 @@ export interface Transaction {
   balanceAfter: number;
   reason?: string;
   refId?: string;
+  transferId?: string; // liên kết cặp giao dịch chuyển xu (debit/credit)
   createdAt: string;
+}
+
+// Kết quả chuyển xu (POST /wallet/transfer) — backend trả transferId, ẩn số dư đối phương.
+export interface TransferResult {
+  transferId: string;
+  fromUserId?: string;
+  toUserId?: string;
+  amount: number;
+  note?: string;
+}
+
+// Chi tiết một lượt chuyển xu (GET /wallet/transfers/:transferId) theo góc nhìn người gọi.
+export interface TransferDetail {
+  transferId: string;
+  amount: number;
+  note?: string;
+  from?: { id: string; username?: string; displayName?: string; avatarUrl?: string };
+  to?: { id: string; username?: string; displayName?: string; avatarUrl?: string };
+  direction: "OUT" | "IN";
+  myBalanceAfter?: number;
+  myTransactionId?: string;
+  createdAt?: string;
 }
 
 export interface NotificationItem {
@@ -230,11 +297,15 @@ export function normalizeUser(u: any): CommunityUser | undefined {
     email: u.email,
     displayName: u.displayName,
     avatarUrl: u.avatarUrl,
+    bio: u.bio,
+    statusMessage: u.statusMessage,
     balance: typeof u.balance === "number" ? u.balance : 0,
     status: u.status ?? "ACTIVE",
     presence: u.presence ?? "OFFLINE",
     lastSeenAt: u.lastSeenAt,
     createdAt: u.createdAt,
+    friendStatus: u.friendStatus,
+    friendRequestId: u.friendRequestId ? normId(u.friendRequestId) : undefined,
   };
 }
 
@@ -276,6 +347,42 @@ export function normalizeMessage(m: any): Message {
   };
 }
 
+export function normalizeDmMessage(m: any): DmMessage {
+  return {
+    id: normId(m?.id ?? m?._id),
+    conversationId: normId(m?.conversationId ?? m?.conversation),
+    senderId: normId(m?.senderId ?? m?.sender ?? m?.authorId ?? m?.author),
+    sender: normalizeUser(m?.sender ?? m?.author),
+    type: (m?.type === "SYSTEM" ? "SYSTEM" : "USER") as DmMessageType,
+    content: m?.content ?? "",
+    systemData: m?.systemData && typeof m.systemData === "object"
+      ? {
+          kind: m.systemData.kind ?? "",
+          fromUserId: m.systemData.fromUserId ? normId(m.systemData.fromUserId) : undefined,
+          toUserId: m.systemData.toUserId ? normId(m.systemData.toUserId) : undefined,
+          amount: typeof m.systemData.amount === "number" ? m.systemData.amount : undefined,
+          note: m.systemData.note,
+          transferId: m.systemData.transferId ? normId(m.systemData.transferId) : undefined,
+        }
+      : undefined,
+    attachments: Array.isArray(m?.attachments) ? m.attachments : undefined,
+    replyToId: m?.replyToId ? normId(m.replyToId) : undefined,
+    replyTo: normalizeReplyPreview(m?.replyTo),
+    editedAt: m?.editedAt,
+    createdAt: m?.createdAt ?? new Date().toISOString(),
+  };
+}
+
+export function normalizeDmConversation(c: any): DmConversation {
+  return {
+    id: normId(c?.id ?? c?._id ?? c?.conversationId),
+    user: normalizeUser(c?.user ?? c?.otherUser ?? c?.peer ?? c?.with),
+    lastMessage: c?.lastMessage ? normalizeDmMessage(c.lastMessage) : null,
+    unread: typeof c?.unread === "number" ? c.unread : (typeof c?.unreadCount === "number" ? c.unreadCount : 0),
+    updatedAt: c?.updatedAt ?? c?.lastMessage?.createdAt,
+  };
+}
+
 export function normalizeMember(m: any): any {
   return {
     id: normId(m?.id ?? m?._id ?? m?.userId ?? m?.user),
@@ -312,12 +419,14 @@ export function normalizeBan(b: any): any {
 }
 
 export function normalizeFriend(f: any): FriendEntry {
+  const dir = f?.direction ?? f?.dir;
   return {
-    id: normId(f?.id ?? f?._id),
+    id: normId(f?.id ?? f?._id ?? f?.requestId),
     state: (f?.state ?? f?.status ?? "PENDING") as FriendEntry["state"],
-    requesterId: normId(f?.requesterId ?? f?.requester),
-    addresseeId: normId(f?.addresseeId ?? f?.addressee),
-    user: normalizeUser(f?.user ?? f?.friend ?? f?.otherUser),
+    requesterId: normId(f?.requesterId ?? f?.requester ?? f?.fromUserId ?? f?.from),
+    addresseeId: normId(f?.addresseeId ?? f?.addressee ?? f?.toUserId ?? f?.to),
+    direction: dir === "incoming" || dir === "outgoing" ? dir : undefined,
+    user: normalizeUser(f?.user ?? f?.friend ?? f?.otherUser ?? f?.requester ?? f?.addressee),
     createdAt: f?.createdAt,
   };
 }
@@ -584,7 +693,7 @@ export const usersApi = {
   getById(id: string) {
     return get<any>(`/users/${id}`).then((d) => normalizeUser(d?.user ?? d) as CommunityUser);
   },
-  updateProfile(input: { displayName?: string; avatarUrl?: string }) {
+  updateProfile(input: { displayName?: string; avatarUrl?: string; bio?: string; statusMessage?: string }) {
     return patch<any>("/users/me", input).then((d) => normalizeUser(d?.user ?? d) as CommunityUser);
   },
   updatePresence(status: PresenceStatus) {
@@ -607,6 +716,7 @@ export const walletApi = {
         balanceAfter: typeof t?.balanceAfter === "number" ? t.balanceAfter : Number(t?.balanceAfter) || 0,
         reason: t?.reason,
         refId: t?.refId,
+        transferId: t?.transferId ? normId(t.transferId) : undefined,
         createdAt: t?.createdAt ?? new Date().toISOString(),
       })) as Transaction[]
     );
@@ -618,17 +728,56 @@ export const walletApi = {
     return post<Transaction>("/wallet/spend", { amount, reason, refId });
   },
   transfer(toUserId: string, amount: number, note?: string) {
-    return post<Transaction>("/wallet/transfer", { toUserId, amount, note });
+    return post<any>("/wallet/transfer", { toUserId, amount, note }).then((d) => {
+      const r = d?.data ?? d ?? {};
+      return {
+        transferId: normId(r.transferId ?? r.id),
+        fromUserId: r.fromUserId ? normId(r.fromUserId) : undefined,
+        toUserId: r.toUserId ? normId(r.toUserId) : undefined,
+        amount: typeof r.amount === "number" ? r.amount : amount,
+        note: r.note ?? note,
+      } as TransferResult;
+    });
+  },
+  // Chi tiết một lượt chuyển xu (chỉ người gửi/nhận xem được).
+  transferDetail(transferId: string) {
+    return get<any>(`/wallet/transfers/${transferId}`).then((d) => {
+      const r = d?.data ?? d ?? {};
+      return {
+        transferId: normId(r.transferId ?? transferId),
+        amount: typeof r.amount === "number" ? r.amount : 0,
+        note: r.note,
+        from: r.from ? { id: normId(r.from.id ?? r.from._id), username: r.from.username, displayName: r.from.displayName, avatarUrl: r.from.avatarUrl } : undefined,
+        to: r.to ? { id: normId(r.to.id ?? r.to._id), username: r.to.username, displayName: r.to.displayName, avatarUrl: r.to.avatarUrl } : undefined,
+        direction: (r.direction === "IN" ? "IN" : "OUT") as "IN" | "OUT",
+        myBalanceAfter: typeof r.myBalanceAfter === "number" ? r.myBalanceAfter : undefined,
+        myTransactionId: r.myTransactionId ? normId(r.myTransactionId) : undefined,
+        createdAt: r.createdAt,
+      } as TransferDetail;
+    });
   },
 };
 
 // ── Friends ─────────────────────────────────────────────────────────────────────
 export const friendsApi = {
   list() {
-    return get<any>("/friends").then((raw) => extractList(raw).map(normalizeFriend) as FriendEntry[]);
+    return get<any>("/friends").then((raw) => {
+      const inner = raw?.data ?? raw;
+      const arr = extractList(inner?.friends ? inner.friends : inner);
+      return arr.map(normalizeFriend) as FriendEntry[];
+    });
   },
   requests() {
-    return get<any>("/friends/requests").then((raw) => extractList(raw).map(normalizeFriend) as FriendEntry[]);
+    return get<any>("/friends/requests").then((raw) => {
+      const inner = raw?.data ?? raw;
+      // Hỗ trợ 2 dạng: mảng phẳng, hoặc { incoming:[], outgoing:[] }.
+      if (inner && (Array.isArray(inner.incoming) || Array.isArray(inner.outgoing))) {
+        const inc = (inner.incoming || []).map((r: any) => ({ ...normalizeFriend(r), direction: "incoming" as const }));
+        const out = (inner.outgoing || []).map((r: any) => ({ ...normalizeFriend(r), direction: "outgoing" as const }));
+        return [...inc, ...out] as FriendEntry[];
+      }
+      return extractList(inner).map(normalizeFriend) as FriendEntry[];
+    });
   },
   request(userId: string) {
     return post("/friends/request", { userId });
@@ -647,6 +796,50 @@ export const friendsApi = {
   },
   unblock(userId: string) {
     return del(`/friends/block/${userId}`);
+  },
+  // Trạng thái kết bạn với 1 user (NONE|FRIENDS|REQUEST_SENT|REQUEST_RECEIVED|BLOCKED).
+  status(userId: string) {
+    return get<any>(`/friends/status/${userId}`).then((d) => {
+      const raw = d?.data ?? d ?? {};
+      return {
+        friendStatus: (raw.friendStatus ?? raw.status ?? "NONE") as FriendStatus,
+        friendRequestId: raw.friendRequestId ? normId(raw.friendRequestId) : undefined,
+      };
+    });
+  },
+};
+
+// ── Direct Messages (DM) ─────────────────────────────────────────────────────
+export const dmApi = {
+  conversations() {
+    return get<any>("/dm/conversations").then((raw) => {
+      const inner = raw?.data ?? raw;
+      return extractList(inner).map(normalizeDmConversation) as DmConversation[];
+    });
+  },
+  open(toUserId: string) {
+    return post<any>("/dm/conversations", { toUserId }).then((d) => normalizeDmConversation(d?.data ?? d) as DmConversation);
+  },
+  messages(conversationId: string, opts?: { before?: string; limit?: number }) {
+    const qs = new URLSearchParams();
+    if (opts?.before) qs.set("before", opts.before);
+    if (opts?.limit) qs.set("limit", String(opts.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<any>(`/dm/conversations/${conversationId}/messages${suffix}`).then(
+      (raw) => extractList(raw?.data ?? raw).map(normalizeDmMessage) as DmMessage[]
+    );
+  },
+  markRead(conversationId: string) {
+    return patch(`/dm/conversations/${conversationId}/read`);
+  },
+  send(input: { toUserId: string; content?: string; attachments?: Attachment[]; replyToId?: string }) {
+    return post<any>("/dm/messages", input).then((d) => normalizeDmMessage(d?.data ?? d) as DmMessage);
+  },
+  edit(messageId: string, content: string) {
+    return patch<any>(`/dm/messages/${messageId}`, { content }).then((d) => normalizeDmMessage(d?.data ?? d) as DmMessage);
+  },
+  remove(messageId: string) {
+    return del(`/dm/messages/${messageId}`);
   },
 };
 

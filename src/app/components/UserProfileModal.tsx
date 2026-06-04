@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  X, Loader2, Coins, Copy, UserPlus, UserCheck, Clock, Check, Calendar, BadgeCheck, Ban,
+  X, Loader2, Coins, Copy, UserPlus, UserCheck, Clock, Check, Calendar, BadgeCheck, Ban, MessageCircle,
 } from "lucide-react";
-import { usersApi, friendsApi, type CommunityUser, type PresenceStatus, type FriendEntry } from "../lib/communityApi";
+import { usersApi, friendsApi, type CommunityUser, type PresenceStatus } from "../lib/communityApi";
 import { useCommunityStore } from "../store/useCommunityStore";
 import { toast } from "./Toast";
 
@@ -12,6 +12,7 @@ interface Props {
   userId: string;
   onClose: () => void;
   onTransfer?: (user: CommunityUser) => void;
+  onMessage?: (user: CommunityUser) => void;
 }
 
 type FriendState =
@@ -19,6 +20,7 @@ type FriendState =
   | "friends"     // đã là bạn
   | "outgoing"    // mình đã gửi lời mời
   | "incoming"    // họ gửi lời mời cho mình
+  | "blocked"     // đã chặn
   | "self";       // chính mình
 
 const PRESENCE_DOT: Record<PresenceStatus, string> = {
@@ -45,7 +47,7 @@ function gradFor(seed?: string) {
 }
 function initials(name?: string) { return (name || "?").trim().slice(0, 2).toUpperCase(); }
 
-export default function UserProfileModal({ userId, onClose, onTransfer }: Props) {
+export default function UserProfileModal({ userId, onClose, onTransfer, onMessage }: Props) {
   const me = useCommunityStore((s) => s.user);
   const presenceMap = useCommunityStore((s) => s.presenceMap);
   const [user, setUser] = useState<CommunityUser | null>(null);
@@ -58,43 +60,39 @@ export default function UserProfileModal({ userId, onClose, onTransfer }: Props)
 
   const isSelf = me?.id === userId;
 
-  const loadFriendStatus = useCallback(async () => {
+  // Suy ra FriendState từ friendStatus do backend trả (góc nhìn người gọi).
+  const applyFriendStatus = useCallback((u?: CommunityUser | null) => {
     if (isSelf) { setFriendState("self"); return; }
-    try {
-      const [friends, requests] = await Promise.all([
-        friendsApi.list().catch(() => [] as FriendEntry[]),
-        friendsApi.requests().catch(() => [] as FriendEntry[]),
-      ]);
-      const isFriend = friends.some(
-        (f) => f.user?.id === userId || f.requesterId === userId || f.addresseeId === userId
-      );
-      if (isFriend) { setFriendState("friends"); return; }
-      // lời mời đến (họ là requester) → mình accept được
-      const incoming = requests.find(
-        (r) => r.requesterId === userId || (r.user?.id === userId && r.addresseeId === me?.id)
-      );
-      if (incoming) { setFriendState("incoming"); setIncomingReqId(incoming.id); return; }
-      // lời mời đi (mình là requester)
-      const outgoing = requests.find(
-        (r) => r.addresseeId === userId || (r.user?.id === userId && r.requesterId === me?.id)
-      );
-      if (outgoing) { setFriendState("outgoing"); return; }
-      setFriendState("none");
-    } catch {
-      setFriendState("none");
-    }
-  }, [userId, isSelf, me?.id]);
+    const fs = u?.friendStatus;
+    if (fs === "FRIENDS") setFriendState("friends");
+    else if (fs === "REQUEST_SENT") setFriendState("outgoing");
+    else if (fs === "REQUEST_RECEIVED") { setFriendState("incoming"); setIncomingReqId(u?.friendRequestId || null); }
+    else if (fs === "BLOCKED") setFriendState("blocked");
+    else setFriendState("none");
+  }, [isSelf]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError(null);
     usersApi.getById(userId)
-      .then((u) => { if (!cancelled) setUser(u); })
+      .then(async (u) => {
+        if (cancelled) return;
+        // Khi xem hồ sơ CHÍNH MÌNH: ghép thêm bio/statusMessage/avatar mới nhất
+        // từ store (phòng khi backend /users/:id trả thiếu hoặc chưa cập nhật kịp).
+        const merged = isSelf && me ? { ...u, ...me, bio: u?.bio ?? me.bio, statusMessage: u?.statusMessage ?? me.statusMessage } : u;
+        setUser(merged);
+        if (isSelf) { setFriendState("self"); return; }
+        if (u?.friendStatus) { applyFriendStatus(u); return; }
+        try {
+          const st = await friendsApi.status(userId);
+          if (cancelled) return;
+          applyFriendStatus({ ...(u as CommunityUser), friendStatus: st.friendStatus, friendRequestId: st.friendRequestId });
+        } catch { if (!cancelled) setFriendState("none"); }
+      })
       .catch((e) => { if (!cancelled) setError(e?.message || "Không tải được hồ sơ."); })
       .finally(() => { if (!cancelled) setLoading(false); });
-    loadFriendStatus();
     return () => { cancelled = true; };
-  }, [userId, loadFriendStatus]);
+  }, [userId, isSelf, me, applyFriendStatus]);
 
   const presence: PresenceStatus = (user && presenceMap[user.id]) || user?.presence || "OFFLINE";
   const nm = user?.displayName || user?.username || "Người dùng";
@@ -128,6 +126,7 @@ export default function UserProfileModal({ userId, onClose, onTransfer }: Props)
     outgoing: { icon: Clock,     label: "Đã gửi lời mời", cls: "bg-white/[0.06] border border-white/10 text-neutral-400 cursor-default" },
     incoming: { icon: Check,     label: "Chấp nhận",      cls: "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white" },
     friends:  { icon: UserCheck, label: "Bạn bè",         cls: "bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-rose-500/15 hover:border-rose-500/30 hover:text-rose-300" },
+    blocked:  { icon: Ban,       label: "Đã chặn",        cls: "bg-rose-500/15 border border-rose-500/30 text-rose-300 cursor-default" },
     self:     { icon: UserPlus,  label: "",               cls: "" },
   }[friendState];
 
@@ -166,21 +165,31 @@ export default function UserProfileModal({ userId, onClose, onTransfer }: Props)
             </div>
 
             <div className="px-5 pb-5 -mt-12 relative">
-              <div className="relative inline-block">
-                <div className={`w-20 h-20 rounded-2xl bg-gradient-to-br ${gradFor(user.username)} ring-4 ring-[#101019] flex items-center justify-center text-2xl font-black text-white overflow-hidden`}>
-                  {user.avatarUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" />
-                  ) : initials(nm)}
+              <div className="flex items-end gap-3">
+                <div className="relative inline-block flex-shrink-0">
+                  <div className={`w-20 h-20 rounded-2xl bg-gradient-to-br ${gradFor(user.username)} ring-4 ring-[#101019] flex items-center justify-center text-2xl font-black text-white overflow-hidden`}>
+                    {user.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" />
+                    ) : initials(nm)}
+                  </div>
+                  <span className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full ${PRESENCE_DOT[presence]} ring-4 ring-[#101019]`} />
                 </div>
-                <span className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full ${PRESENCE_DOT[presence]} ring-4 ring-[#101019]`} />
+
+                {/* Câu trạng thái dạng bong bóng chat, đuôi trỏ về avatar */}
+                {user.statusMessage && (
+                  <div className="relative mb-1 max-w-[210px] px-3.5 py-2 rounded-2xl rounded-bl-md bg-[#26262f] shadow-lg">
+                    <span className="absolute -left-1.5 bottom-2.5 w-3 h-3 bg-[#26262f] rotate-45" />
+                    <p className="relative text-[13px] text-neutral-100 leading-snug break-words">{user.statusMessage}</p>
+                  </div>
+                )}
               </div>
 
               <div className="mt-3 flex items-center gap-2 flex-wrap">
                 <h3 className="text-lg font-black text-white">{nm}</h3>
                 {(user as any).isAdmin && <BadgeCheck className="w-4 h-4 text-sky-400" />}
               </div>
-              <div className="text-[12px] text-neutral-500">{user.username}</div>
+              <div className="text-[12px] text-neutral-500">@{user.username}</div>
 
               <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.06] text-[10px] font-bold text-neutral-300">
@@ -196,6 +205,14 @@ export default function UserProfileModal({ userId, onClose, onTransfer }: Props)
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-emerald-300 bg-emerald-500/15">Bạn bè</span>
                 )}
               </div>
+
+              {/* Giới thiệu (bio) */}
+              {user.bio && (
+                <div className="mt-3 px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-neutral-500 mb-1">Giới thiệu</div>
+                  <p className="text-[12px] text-neutral-300 leading-relaxed whitespace-pre-wrap break-words">{user.bio}</p>
+                </div>
+              )}
 
               {/* Thông tin */}
               <div className="mt-4 flex flex-col gap-2">
@@ -220,22 +237,32 @@ export default function UserProfileModal({ userId, onClose, onTransfer }: Props)
 
               {/* Hành động */}
               {!isSelf && (
-                <div className="mt-4 flex gap-2">
-                  <button
-                    onClick={doFriendAction}
-                    disabled={friendBusy || friendState === "outgoing"}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[12px] font-bold transition-all cursor-pointer active:scale-[0.98] disabled:opacity-80 group/fr ${friendBtn.cls}`}
-                  >
-                    {friendBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <friendBtn.icon className="w-4 h-4" />}
-                    <span className={friendState === "friends" ? "group-hover/fr:hidden" : ""}>{friendBtn.label}</span>
-                    {friendState === "friends" && <span className="hidden group-hover/fr:inline">Huỷ kết bạn</span>}
-                  </button>
-                  <button
-                    onClick={() => onTransfer?.(user)}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-[12px] font-bold transition-all cursor-pointer active:scale-[0.98]"
-                  >
-                    <Coins className="w-4 h-4" /> Chuyển xu
-                  </button>
+                <div className="mt-4 flex flex-col gap-2">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={doFriendAction}
+                      disabled={friendBusy || friendState === "outgoing" || friendState === "blocked"}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[12px] font-bold transition-all cursor-pointer active:scale-[0.98] disabled:opacity-80 group/fr ${friendBtn.cls}`}
+                    >
+                      {friendBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <friendBtn.icon className="w-4 h-4" />}
+                      <span className={friendState === "friends" ? "group-hover/fr:hidden" : ""}>{friendBtn.label}</span>
+                      {friendState === "friends" && <span className="hidden group-hover/fr:inline">Huỷ kết bạn</span>}
+                    </button>
+                    <button
+                      onClick={() => onTransfer?.(user)}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-[12px] font-bold transition-all cursor-pointer active:scale-[0.98]"
+                    >
+                      <Coins className="w-4 h-4" /> Chuyển xu
+                    </button>
+                  </div>
+                  {onMessage && (
+                    <button
+                      onClick={() => onMessage(user)}
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-violet-500/15 border border-violet-500/30 text-violet-200 hover:bg-violet-500/25 text-[12px] font-bold transition-all cursor-pointer active:scale-[0.98]"
+                    >
+                      <MessageCircle className="w-4 h-4" /> Nhắn tin
+                    </button>
+                  )}
                 </div>
               )}
             </div>

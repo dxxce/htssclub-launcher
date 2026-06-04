@@ -27,6 +27,7 @@ import {
   onChat,
   chat,
 } from "../lib/communitySocket";
+import { playCoinReceiveSound, playTransferSuccessSound } from "../lib/notifySounds";
 
 interface CommunityState {
   // auth
@@ -57,7 +58,7 @@ interface CommunityState {
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
   setPresence: (status: PresenceStatus) => Promise<void>;
-  updateProfile: (input: { displayName?: string; avatarUrl?: string }) => Promise<void>;
+  updateProfile: (input: { displayName?: string; avatarUrl?: string; bio?: string; statusMessage?: string }) => Promise<void>;
   uploadAvatar: (file: Blob, filename?: string) => Promise<string>;
   openAuthModal: () => void;
   closeAuthModal: () => void;
@@ -255,6 +256,8 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
             ...s.user,
             displayName: updated?.displayName ?? input.displayName ?? s.user.displayName,
             avatarUrl: updated?.avatarUrl ?? input.avatarUrl ?? s.user.avatarUrl,
+            bio: updated?.bio ?? input.bio ?? s.user.bio,
+            statusMessage: updated?.statusMessage ?? input.statusMessage ?? s.user.statusMessage,
           }
         : s.user,
     }));
@@ -680,14 +683,14 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
       set((s) => {
         // user hiện tại
         const user = s.user && s.user.id === u.id
-          ? { ...s.user, displayName: u.displayName ?? s.user.displayName, username: u.username ?? s.user.username, avatarUrl: u.avatarUrl ?? s.user.avatarUrl }
+          ? { ...s.user, displayName: u.displayName ?? s.user.displayName, username: u.username ?? s.user.username, avatarUrl: u.avatarUrl ?? s.user.avatarUrl, bio: u.bio ?? s.user.bio, statusMessage: u.statusMessage ?? s.user.statusMessage }
           : s.user;
         // thành viên trong server đang mở
         let activeServer = s.activeServer;
         if (activeServer) {
           const members = activeServer.members.map((mem) =>
             mem.userId === u.id && mem.user
-              ? { ...mem, user: { ...mem.user, displayName: u.displayName ?? mem.user.displayName, username: u.username ?? mem.user.username, avatarUrl: u.avatarUrl ?? mem.user.avatarUrl } }
+              ? { ...mem, user: { ...mem.user, displayName: u.displayName ?? mem.user.displayName, username: u.username ?? mem.user.username, avatarUrl: u.avatarUrl ?? mem.user.avatarUrl, bio: u.bio ?? mem.user.bio, statusMessage: u.statusMessage ?? mem.user.statusMessage } }
               : mem
           );
           activeServer = { ...activeServer, members };
@@ -750,7 +753,39 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
 
     // Thành viên server thay đổi.
     onChat("server:member-joined", (e) => {
-      if (e?.serverId && get().activeServerId === e.serverId) get().selectServer(e.serverId);
+      if (!e?.serverId || get().activeServerId !== e.serverId) return;
+      const m = e.member;
+      // Có member card đầy đủ → thêm/ghép ngay vào danh sách, không cần fetch lại.
+      if (m && (m.userId || e.userId)) {
+        const uid = m.userId || e.userId;
+        set((s) => {
+          if (!s.activeServer || s.activeServer.id !== e.serverId) return {};
+          const existing = s.activeServer.members.find((x) => x.userId === uid);
+          const mergedUser = m.user
+            ? ({
+                ...(existing?.user || {}),
+                ...m.user,
+                id: m.user.id || uid,
+              } as import("../lib/communityApi").CommunityUser)
+            : existing?.user;
+          const merged: import("../lib/communityApi").ServerMember = {
+            id: existing?.id || uid,
+            userId: uid,
+            serverId: e.serverId,
+            role: (m.role || existing?.role || "MEMBER") as import("../lib/communityApi").MemberRole,
+            nickname: m.nickname ?? existing?.nickname,
+            joinedAt: m.joinedAt ?? existing?.joinedAt,
+            user: mergedUser,
+          };
+          const members = existing
+            ? s.activeServer.members.map((x) => (x.userId === uid ? merged : x))
+            : [...s.activeServer.members, merged];
+          return { activeServer: { ...s.activeServer, members } };
+        });
+        return;
+      }
+      // Fallback (payload cũ chỉ có userId) → tải lại danh sách server.
+      get().selectServer(e.serverId);
     });
     onChat("server:member-left", (e) => {
       if (!e?.serverId || !e.userId) return;
@@ -783,6 +818,27 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
       // bị ban → tải lại danh sách server (server sẽ biến mất).
       get().loadServers();
     });
+    onChat("server:deleted", (e) => {
+      if (!e?.serverId) return;
+      // Server bị xoá → gỡ khỏi danh sách ngay, không để "server ma".
+      set((s) => {
+        const servers = s.servers.filter((x) => x.id !== e.serverId);
+        const wasActive = s.activeServerId === e.serverId;
+        if (!wasActive) return { servers };
+        // đang xem server bị xoá → chuyển sang server còn lại (hoặc trống).
+        const nextId = servers[0]?.id || null;
+        if (nextId) saveActiveServer(nextId);
+        return {
+          servers,
+          activeServerId: nextId,
+          activeServer: null,
+          channels: [],
+          activeChannelId: null,
+        };
+      });
+      const next = get().activeServerId;
+      if (next) get().selectServer(next);
+    });
     onChat("server:ownership-transferred", (e) => {
       if (e?.serverId && get().activeServerId === e.serverId) get().selectServer(e.serverId);
     });
@@ -813,6 +869,21 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
         }
         return { presenceMap, user, activeServer };
       });
+    });
+
+    // Ví xu: cập nhật số dư realtime (nạp/tiêu/thưởng/chuyển).
+    // Đây là NGUỒN DUY NHẤT phát âm thanh giao dịch (mỗi event = 1 tiếng) để tránh
+    // kêu 2 lần. Lúc bấm nút chuyển chỉ phát tiếng khi THẤT BẠI (không có event).
+    onChat("wallet:transaction", (e) => {
+      if (typeof e?.balance !== "number") return;
+      set((s) => ({ user: s.user ? { ...s.user, balance: e.balance } : s.user }));
+      try {
+        const amt = e.transaction?.amount;
+        if (typeof amt === "number") {
+          if (amt > 0) playCoinReceiveSound();        // nhận xu
+          else if (amt < 0) playTransferSuccessSound(); // chuyển đi / tiêu
+        }
+      } catch {/* ignore */}
     });
   },
 

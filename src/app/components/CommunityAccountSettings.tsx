@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, Camera, Loader2, Check, User as UserIcon, Coins } from "lucide-react";
+import { X, Camera, Loader2, Check, User as UserIcon, Coins, Quote, FileText } from "lucide-react";
 import { useCommunityStore } from "../store/useCommunityStore";
 import { toast } from "./Toast";
 import AvatarCropper from "./AvatarCropper";
@@ -24,7 +24,10 @@ export default function CommunityAccountSettings({ onClose }: Props) {
   const uploadAvatar = useCommunityStore((s) => s.uploadAvatar);
 
   const [displayName, setDisplayName] = useState(user?.displayName || "");
+  const [statusMessage, setStatusMessage] = useState(user?.statusMessage || "");
+  const [bio, setBio] = useState(user?.bio || "");
   const [savingName, setSavingName] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
   const [cropSrc, setCropSrc] = useState<string | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -32,10 +35,15 @@ export default function CommunityAccountSettings({ onClose }: Props) {
   useEffect(() => {
     setDisplayName(user?.displayName || "");
   }, [user?.displayName]);
+  useEffect(() => { setStatusMessage(user?.statusMessage || ""); }, [user?.statusMessage]);
+  useEffect(() => { setBio(user?.bio || ""); }, [user?.bio]);
 
   if (!user) return null;
 
   const nameChanged = displayName.trim() !== (user.displayName || "").trim() && displayName.trim().length > 0;
+  const profileChanged =
+    statusMessage.trim() !== (user.statusMessage || "").trim() ||
+    bio.trim() !== (user.bio || "").trim();
 
   const pickFile = () => fileRef.current?.click();
 
@@ -90,6 +98,22 @@ export default function CommunityAccountSettings({ onClose }: Props) {
       /* toast đã báo */
     } finally {
       setSavingName(false);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    if (!profileChanged || savingProfile) return;
+    setSavingProfile(true);
+    try {
+      await toast.promise(updateProfile({ statusMessage: statusMessage.trim(), bio: bio.trim() }), {
+        loading: "Đang lưu hồ sơ...",
+        success: "Đã cập nhật hồ sơ!",
+        error: (e) => e?.message || "Cập nhật thất bại.",
+      });
+    } catch {
+      /* toast đã báo */
+    } finally {
+      setSavingProfile(false);
     }
   };
 
@@ -184,6 +208,47 @@ export default function CommunityAccountSettings({ onClose }: Props) {
                 Lưu
               </button>
             </div>
+
+            {/* Câu trạng thái */}
+            <label className="block text-[11px] font-black uppercase tracking-widest text-neutral-500 mb-1.5 mt-5">
+              Câu trạng thái
+            </label>
+            <div className="relative">
+              <Quote className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                value={statusMessage}
+                onChange={(e) => setStatusMessage(e.target.value)}
+                maxLength={128}
+                placeholder="Bạn đang nghĩ gì?"
+                className="w-full pl-9 pr-14 py-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-sm text-neutral-100 placeholder:text-neutral-600 outline-none focus:border-violet-500/50 transition-all"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-neutral-600 tabular-nums">{statusMessage.length}/128</span>
+            </div>
+
+            {/* Giới thiệu (bio) */}
+            <label className="block text-[11px] font-black uppercase tracking-widest text-neutral-500 mb-1.5 mt-4">
+              Giới thiệu
+            </label>
+            <div className="relative">
+              <FileText className="w-4 h-4 text-neutral-500 absolute left-3 top-3" />
+              <textarea
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+                maxLength={300}
+                rows={3}
+                placeholder="Giới thiệu đôi chút về bạn..."
+                className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-sm text-neutral-100 placeholder:text-neutral-600 outline-none focus:border-violet-500/50 transition-all resize-none custom-scrollbar"
+              />
+              <span className="block text-right text-[10px] font-bold text-neutral-600 tabular-nums mt-1">{bio.length}/300</span>
+            </div>
+            <button
+              onClick={handleSaveProfile}
+              disabled={!profileChanged || savingProfile}
+              className="mt-2 w-full flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white text-sm font-bold transition-all cursor-pointer active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {savingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+              Lưu hồ sơ
+            </button>
 
             {/* Thông tin chỉ đọc */}
             <div className="mt-5 flex flex-col gap-2">

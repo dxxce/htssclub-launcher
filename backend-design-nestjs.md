@@ -266,6 +266,9 @@ export class Notification {
 | DELETE | `/:userId` | Hủy kết bạn. |
 | POST | `/block` `{ userId }` | Chặn user. |
 | DELETE | `/block/:userId` | Bỏ chặn. |
+| GET | `/status/:userId` | Trạng thái kết bạn với 1 user: `{ friendStatus: NONE\|FRIENDS\|REQUEST_SENT\|REQUEST_RECEIVED\|BLOCKED, friendRequestId? }`. |
+
+> **Profile mở rộng:** User có thêm `bio` (≤300 ký tự) và `statusMessage` (≤128 ký tự), cập nhật qua `PATCH /api/users/me { bio?, statusMessage? }`, trả về ở mọi endpoint users. `GET /api/users/:id` và `GET /api/users/search` kèm thêm `friendStatus` + `friendRequestId` theo góc nhìn người gọi (để render nút Kết bạn/Đã gửi/Bạn bè/Chấp nhận ngay).
 
 ---
 

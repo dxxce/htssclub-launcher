@@ -7,7 +7,8 @@ import {
   Coins, X, DoorOpen, Sparkles, Mic, MicOff, Headphones, VolumeX, PhoneOff, Signal, Settings,
   UserPlus, Smile, ChevronLeft, ChevronRight, ImagePlus, FileText, Download, Pencil, GripVertical,
   Paperclip, FileVideo, FileAudio, Bold, Italic, Strikethrough, Code, Link2, Quote, List, Eye, EyeOff, Reply, SmilePlus,
-  ScreenShare, ScreenShareOff, Video,
+  ScreenShare, ScreenShareOff, Video, Maximize2, Minimize2, MonitorPlay, Camera,
+  Users2, MessageCircle, Check,
 } from "lucide-react";
 import { useCommunityStore } from "../store/useCommunityStore";
 import { useVoiceStore, type VoiceParticipantState } from "../store/useVoiceStore";
@@ -17,6 +18,9 @@ import { toast } from "./Toast";
 import CommunityAccountSettings from "./CommunityAccountSettings";
 import ServerSettings from "./ServerSettings";
 import UserProfileModal from "./UserProfileModal";
+import FriendsView from "./FriendsView";
+import MessagesView from "./MessagesView";
+import { useDmStore } from "../store/useDmStore";
 import WalletModal from "./WalletModal";
 import VoiceSettingsModal from "./VoiceSettingsModal";
 import ScreenSharePicker from "./ScreenSharePicker";
@@ -278,6 +282,9 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
   const [showServerSettings, setShowServerSettings] = useState(false);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [showSharePicker, setShowSharePicker] = useState(false);
+  // View switcher: cộng đồng (server/chat) | bạn bè | tin nhắn.
+  const [view, setView] = useState<"community" | "friends" | "messages">("community");
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showJump, setShowJump] = useState(false);
@@ -296,6 +303,15 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
+
+  // Bind DM realtime + tải inbox khi đã đăng nhập (để badge chưa đọc cập nhật toàn cục).
+  const dmUnread = useDmStore((s) => s.totalUnread());
+  useEffect(() => {
+    if (!user) return;
+    const dm = useDmStore.getState();
+    dm.bindRealtime();
+    dm.loadConversations();
+  }, [user]);
 
   useEffect(() => {
     if (reloadKey && user) refreshMe();
@@ -695,15 +711,67 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
           <ChevronLeft className={`w-5 h-5 transition-transform ${sidebarOpen ? "" : "rotate-180"}`} />
         </button>
 
-        {/* Logo cộng đồng */}
-        <div className="flex items-center gap-2 pr-2 mr-1 border-r border-white/[0.06] flex-shrink-0">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-600 flex items-center justify-center shadow-[0_0_14px_rgba(139,92,246,0.4)]">
-            <Sparkles className="w-4 h-4 text-white" />
-          </div>
-          <span className="text-[13px] font-black text-white hidden md:block">Cộng đồng</span>
+        {/* Bộ chọn khu vực (Cộng đồng / Bạn bè / Tin nhắn) — bấm để đổi màn hình */}
+        <div className="relative pr-2 mr-1 border-r border-white/[0.06] flex-shrink-0">
+          <button
+            onClick={() => setViewMenuOpen((v) => !v)}
+            className="group flex items-center gap-2 cursor-pointer"
+          >
+            <div className={`w-8 h-8 rounded-xl flex items-center justify-center shadow-[0_0_14px_rgba(139,92,246,0.4)] transition-transform group-hover:scale-105 ${
+              view === "community" ? "bg-gradient-to-br from-violet-600 to-fuchsia-600"
+              : view === "friends" ? "bg-gradient-to-br from-emerald-600 to-teal-600"
+              : "bg-gradient-to-br from-sky-600 to-indigo-600"
+            }`}>
+              {view === "community" ? <Sparkles className="w-4 h-4 text-white" />
+                : view === "friends" ? <Users2 className="w-4 h-4 text-white" />
+                : <MessageCircle className="w-4 h-4 text-white" />}
+            </div>
+            <span className="text-[13px] font-black text-white hidden md:block">
+              {view === "community" ? "Cộng đồng" : view === "friends" ? "Bạn bè" : "Tin nhắn"}
+            </span>
+            {dmUnread > 0 && view !== "messages" && (
+              <span className="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center">{dmUnread > 99 ? "99+" : dmUnread}</span>
+            )}
+            <ChevronDown className={`w-4 h-4 text-neutral-400 transition-transform ${viewMenuOpen ? "rotate-180" : ""}`} />
+          </button>
+
+          {viewMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setViewMenuOpen(false)} />
+              <div className="absolute left-0 top-full mt-2 w-52 z-40 glass rounded-xl p-1.5 shadow-2xl animate-pop-in overflow-hidden">
+                <div className="absolute inset-x-0 top-0 h-px grad-hairline" />
+                {([
+                  { id: "community", label: "Cộng đồng", desc: "Server, kênh & thoại", Icon: Sparkles, grad: "from-violet-600 to-fuchsia-600" },
+                  { id: "friends", label: "Bạn bè", desc: "Danh sách & lời mời", Icon: Users2, grad: "from-emerald-600 to-teal-600" },
+                  { id: "messages", label: "Tin nhắn", desc: "Nhắn riêng 1-1", Icon: MessageCircle, grad: "from-sky-600 to-indigo-600" },
+                ] as const).map(({ id, label, desc, Icon, grad }) => (
+                  <button
+                    key={id}
+                    onClick={() => { setView(id); setViewMenuOpen(false); }}
+                    className={`w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-all cursor-pointer ${
+                      view === id ? "bg-white/[0.08]" : "hover:bg-white/[0.05]"
+                    }`}
+                  >
+                    <div className={`relative w-8 h-8 rounded-lg bg-gradient-to-br ${grad} flex items-center justify-center flex-shrink-0`}>
+                      <Icon className="w-4 h-4 text-white" />
+                      {id === "messages" && dmUnread > 0 && (
+                        <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center ring-2 ring-[#0b0b16]">{dmUnread > 99 ? "99+" : dmUnread}</span>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[12px] font-bold text-white">{label}</div>
+                      <div className="text-[10px] text-neutral-500 truncate">{desc}</div>
+                    </div>
+                    {view === id && <Check className="w-4 h-4 text-violet-300 flex-shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Danh sách spaces (server) dạng pill ngang */}
+        {/* Danh sách spaces (server) dạng pill ngang — chỉ ở khu Cộng đồng */}
+        {view === "community" ? (
         <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto custom-scrollbar py-1">
           {loadingServers ? (
             <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />
@@ -755,9 +823,17 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
             <Plus className="w-4 h-4" />
           </button>
         </div>
+        ) : (
+          <div className="flex-1 min-w-0" />
+        )}
       </div>
 
-      {/* ════════════ THÂN: SIDEBAR KÊNH + KHU CHAT ════════════ */}
+      {/* ════════════ THÂN: theo khu vực đang chọn ════════════ */}
+      {view === "friends" ? (
+        <FriendsView onOpenProfile={openProfile} />
+      ) : view === "messages" ? (
+        <MessagesView onOpenProfile={openProfile} onOpenWallet={() => setWalletTarget(null)} />
+      ) : (
       <div className="flex flex-1 min-h-0">
         {/* ── Sidebar kênh ── */}
         <div
@@ -1425,6 +1501,7 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
           )}
         </div>
       </div>
+      )}
 
       {/* Menu chuột phải */}
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
@@ -1435,11 +1512,11 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
       {/* Cài đặt thoại (thiết bị + lọc âm) */}
       {showVoiceSettings && <VoiceSettingsModal onClose={() => setShowVoiceSettings(false)} />}
 
-      {/* Chọn nguồn + chất lượng chia sẻ màn hình */}
+      {/* Chọn nguồn + chất lượng chia sẻ màn hình (kiểu Discord) */}
       {showSharePicker && (
         <ScreenSharePicker
           onClose={() => setShowSharePicker(false)}
-          onConfirm={(opts) => { setShowSharePicker(false); voice.startScreenShare(opts).catch(() => {}); }}
+          onConfirm={(cfg) => { setShowSharePicker(false); voice.startScreenShare(cfg).catch(() => {}); }}
         />
       )}
 
@@ -1459,6 +1536,7 @@ export default function CommunityHub({ reloadKey }: CommunityHubProps) {
           userId={profileId}
           onClose={() => setProfileId(null)}
           onTransfer={(u) => { setProfileId(null); setWalletTarget(u); }}
+          onMessage={(u) => { setProfileId(null); setView("messages"); useDmStore.getState().openConversation(u); }}
         />
       )}
 
@@ -1500,7 +1578,7 @@ function MemberSection({
   label, members, presenceMap, dim, onSelect, onContextMenu,
 }: {
   label: string;
-  members: { id?: string; userId: string; role: MemberRole; nickname?: string; user?: { displayName?: string; username?: string; avatarUrl?: string; presence?: PresenceStatus } }[];
+  members: { id?: string; userId: string; role: MemberRole; nickname?: string; user?: { displayName?: string; username?: string; avatarUrl?: string; presence?: PresenceStatus; statusMessage?: string } }[];
   presenceMap: Record<string, PresenceStatus>;
   dim?: boolean;
   onSelect?: (userId: string) => void;
@@ -1514,6 +1592,7 @@ function MemberSection({
         const RoleIcon = ROLE_ICON[mem.role];
         const nm = mem.nickname || mem.user?.displayName || mem.user?.username || "Người dùng";
         const pres = presenceMap[mem.userId] || mem.user?.presence || "OFFLINE";
+        const status = mem.user?.statusMessage;
         return (
           <button
             key={mem.id || mem.userId || `mem-${mi}`}
@@ -1522,7 +1601,10 @@ function MemberSection({
             className={`flex items-center gap-2.5 w-full px-2 py-1.5 rounded-xl hover:bg-white/[0.04] transition-colors cursor-pointer text-left ${dim ? "opacity-60" : ""}`}
           >
             <Avatar name={nm} url={mem.user?.avatarUrl} size={32} presence={pres} />
-            <span className="flex-1 min-w-0 text-[12px] font-semibold text-neutral-200 truncate">{nm}</span>
+            <span className="flex-1 min-w-0 flex flex-col">
+              <span className="text-[12px] font-semibold text-neutral-200 truncate leading-tight">{nm}</span>
+              {status && <span className="text-[10px] text-neutral-500 truncate leading-tight">{status}</span>}
+            </span>
             {mem.role !== "MEMBER" && (
               <RoleIcon className={`w-3.5 h-3.5 flex-shrink-0 ${mem.role === "OWNER" ? "text-amber-400" : "text-sky-400"}`} />
             )}
@@ -1900,6 +1982,12 @@ function StreamViewer({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [fs, setFs] = useState(false);
+  const [hideBars, setHideBars] = useState(false);
+  const hideTimer = useRef<number | null>(null);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -1907,27 +1995,88 @@ function StreamViewer({
     el.play().catch(() => {/* ignore */});
     return () => { try { el.srcObject = null; } catch {/* ignore */} };
   }, [video.track]);
+
+  // đếm thời lượng xem.
+  useEffect(() => {
+    const t0 = Date.now();
+    const id = window.setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => window.clearInterval(id);
+  }, [video.userId, video.source]);
+
+  // ESC để đóng.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const toggleFs = () => {
+    const node = wrapRef.current;
+    if (!node) return;
+    if (!document.fullscreenElement) node.requestFullscreen?.().then(() => setFs(true)).catch(() => {});
+    else document.exitFullscreen?.().then(() => setFs(false)).catch(() => {});
+  };
+  useEffect(() => {
+    const onFsChange = () => setFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  // tự ẩn thanh điều khiển khi không di chuột.
+  const poke = () => {
+    setHideBars(false);
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setHideBars(true), 2600);
+  };
+  useEffect(() => { poke(); return () => { if (hideTimer.current) window.clearTimeout(hideTimer.current); }; }, []);
+
+  const mmss = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+  const SourceIcon = video.source === "camera" ? Camera : MonitorPlay;
+
   return (
-    <div className="absolute inset-0 z-40 bg-black/85 backdrop-blur-sm flex flex-col animate-fade-in">
-      <div className="h-12 flex items-center gap-2 px-4 border-b border-white/[0.06] flex-shrink-0">
-        <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 text-[10px] font-black">
-          <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" /> LIVE
-        </span>
-        <span className="text-[13px] font-bold text-white truncate">
-          {video.source === "camera" ? "Camera của" : "Màn hình của"} {name}
-        </span>
-        <button
-          onClick={onClose}
-          data-tip="Đóng"
-          data-tip-pos="bottom"
-          className="ml-auto w-8 h-8 flex items-center justify-center rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-        >
-          <X className="w-4 h-4" />
-        </button>
+    <div
+      ref={wrapRef}
+      onMouseMove={poke}
+      className="absolute inset-0 z-40 bg-[#05050a] flex flex-col animate-fade-in"
+    >
+      {/* Header nổi */}
+      <div className={`absolute top-0 inset-x-0 z-10 transition-all duration-300 ${hideBars ? "-translate-y-full opacity-0" : "translate-y-0 opacity-100"}`}>
+        <div className="h-14 flex items-center gap-3 px-4 bg-gradient-to-b from-black/80 to-transparent">
+          <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/90 text-white text-[10px] font-black shadow-lg">
+            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" /> TRỰC TIẾP
+          </span>
+          <div className="flex items-center gap-2 min-w-0">
+            <SourceIcon className="w-4 h-4 text-violet-300 flex-shrink-0" />
+            <span className="text-[13px] font-bold text-white truncate">
+              {video.source === "camera" ? "Camera của" : "Màn hình của"} {name}
+            </span>
+          </div>
+          <span className="px-2 py-0.5 rounded-md bg-white/10 text-[11px] font-bold text-neutral-300 tabular-nums flex-shrink-0">{mmss}</span>
+          <div className="ml-auto flex items-center gap-1 flex-shrink-0">
+            <button
+              onClick={toggleFs}
+              data-tip={fs ? "Thoát toàn màn hình" : "Toàn màn hình"}
+              data-tip-pos="bottom"
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-neutral-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            >
+              {fs ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={onClose}
+              data-tip="Đóng (Esc)"
+              data-tip-pos="bottom"
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-neutral-300 hover:text-white hover:bg-rose-500/30 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </div>
-      <div className="flex-1 min-h-0 flex items-center justify-center p-3">
+
+      {/* Video */}
+      <div className="flex-1 min-h-0 flex items-center justify-center" onClick={poke}>
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video ref={ref} autoPlay playsInline className="max-w-full max-h-full rounded-xl bg-black object-contain" />
+        <video ref={ref} autoPlay playsInline className="max-w-full max-h-full object-contain" />
       </div>
     </div>
   );
